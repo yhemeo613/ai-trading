@@ -43,6 +43,14 @@ async function boot() {
     logger.info(`Dashboard: http://localhost:${config.server.port}`);
   });
 
+  server.on('error', (err: any) => {
+    if (err.code === 'EADDRINUSE') {
+      logger.error(`Port ${config.server.port} is in use. Dashboard disabled, trading loop continues.`);
+    } else {
+      logger.error('Server error', { error: err.message });
+    }
+  });
+
   // Auto-start trading loop
   startLoop();
 }

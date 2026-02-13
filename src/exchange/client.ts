@@ -9,17 +9,22 @@ export function getExchange(): Exchange {
   if (exchange) return exchange;
 
   if (config.testnetOnly) {
-    logger.info('Initializing ccxt binance futures TESTNET client');
+    logger.info('Initializing ccxt binance futures TESTNET client (demo trading)');
     exchange = new ccxt.binance({
       apiKey: config.binance.apiKey,
       secret: config.binance.secret,
       enableRateLimit: true,
       options: {
         defaultType: 'future',
-        sandboxMode: true,
+      },
+      urls: {
+        api: {
+          fapiPublic: config.binance.futuresUrl + '/fapi/v1',
+          fapiPrivate: config.binance.futuresUrl + '/fapi/v1',
+          fapiPrivateV2: config.binance.futuresUrl + '/fapi/v2',
+        },
       },
     });
-    exchange.setSandboxMode(true);
   } else {
     logger.info('Initializing ccxt binance futures LIVE client');
     exchange = new ccxt.binance({
