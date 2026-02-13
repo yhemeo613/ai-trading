@@ -1,12 +1,15 @@
 {
-  "currentStep": 1,
+  "currentStep": 20,
   "totalSteps": 20,
+  "status": "complete",
   "history": [
-    {
-      "step": 1,
-      "description": "项目初始化：package.json, tsconfig, Express 骨架",
-      "status": "in-progress",
-      "timestamp": "2026-02-14T00:00:00Z"
-    }
+    { "step": 1, "description": "项目初始化：package.json, tsconfig, Express 骨架", "status": "done" },
+    { "step": 2, "description": "配置模块 + .env 加载 + 代理", "status": "done" },
+    { "step": "3-4", "description": "ccxt 客户端 + 市场数据 + 账户查询", "status": "done" },
+    { "step": "5-6", "description": "AI 提供商抽象 + Zod 决策 Schema", "status": "done" },
+    { "step": "7-9", "description": "交易会话 + 硬限制风控 + 交易执行器", "status": "done" },
+    { "step": "10-13", "description": "SQLite 持久化 + 主循环 + AI 选币 + 熔断器", "status": "done" },
+    { "step": "14-17", "description": "Dashboard API + 前端 + WebSocket + AI 动态风控", "status": "done" },
+    { "step": 20, "description": "全功能联调 + index.ts 整合", "status": "done" }
   ]
 }
