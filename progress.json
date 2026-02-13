@@ -1,0 +1,12 @@
+{
+  "currentStep": 1,
+  "totalSteps": 20,
+  "history": [
+    {
+      "step": 1,
+      "description": "项目初始化：package.json, tsconfig, Express 骨架",
+      "status": "in-progress",
+      "timestamp": "2026-02-14T00:00:00Z"
+    }
+  ]
+}

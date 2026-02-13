@@ -1,0 +1,24 @@
+{
+  "features": [
+    { "id": "project-init", "name": "项目初始化", "status": "in-progress" },
+    { "id": "config-proxy", "name": "配置模块 + 代理", "status": "pending" },
+    { "id": "exchange-client", "name": "交易所客户端", "status": "pending" },
+    { "id": "market-data", "name": "市场数据采集", "status": "pending" },
+    { "id": "ai-provider", "name": "AI 提供商抽象", "status": "pending" },
+    { "id": "decision-schema", "name": "决策 Schema 校验", "status": "pending" },
+    { "id": "trading-session", "name": "交易会话", "status": "pending" },
+    { "id": "hard-limits", "name": "硬限制风控", "status": "pending" },
+    { "id": "executor", "name": "交易执行器", "status": "pending" },
+    { "id": "persistence", "name": "SQLite 持久化", "status": "pending" },
+    { "id": "main-loop", "name": "主交易循环", "status": "pending" },
+    { "id": "pair-selector", "name": "AI 选币", "status": "pending" },
+    { "id": "circuit-breaker", "name": "熔断器", "status": "pending" },
+    { "id": "dashboard-api", "name": "Dashboard API", "status": "pending" },
+    { "id": "dashboard-frontend", "name": "Dashboard 前端", "status": "pending" },
+    { "id": "websocket", "name": "WebSocket 推送", "status": "pending" },
+    { "id": "ai-risk", "name": "AI 动态风控", "status": "pending" },
+    { "id": "all-providers", "name": "全部 AI 提供商", "status": "pending" },
+    { "id": "logging-retry", "name": "日志 + 重试加固", "status": "pending" },
+    { "id": "integration", "name": "全功能联调", "status": "pending" }
+  ]
+}
