@@ -9,7 +9,7 @@ export function getExchange(): Exchange {
   if (exchange) return exchange;
 
   if (config.testnetOnly) {
-    logger.info('Initializing ccxt binance futures TESTNET client (demo trading)');
+    logger.info('Initializing ccxt binance futures TESTNET client');
     exchange = new ccxt.binance({
       apiKey: config.binance.apiKey,
       secret: config.binance.secret,
@@ -17,14 +17,16 @@ export function getExchange(): Exchange {
       options: {
         defaultType: 'future',
       },
-      urls: {
-        api: {
-          fapiPublic: config.binance.futuresUrl + '/fapi/v1',
-          fapiPrivate: config.binance.futuresUrl + '/fapi/v1',
-          fapiPrivateV2: config.binance.futuresUrl + '/fapi/v2',
-        },
-      },
     });
+    // Swap API URLs with testnet URLs
+    const testUrls = (exchange as any).urls['test'];
+    if (testUrls) {
+      (exchange as any).urls['api'] = {
+        ...(exchange as any).urls['api'],
+        ...testUrls,
+      };
+      logger.info('Switched to testnet URLs');
+    }
   } else {
     logger.info('Initializing ccxt binance futures LIVE client');
     exchange = new ccxt.binance({
