@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Trading Bot Dashboard</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1>AI Trading Bot</h1>
+      <span id="status-badge" class="status-badge status-stopped">STOPPED</span>
+      <span id="ws-badge" class="status-badge" style="margin-left:8px">WS: --</span>
+    </div>
+    <div class="controls">
+      <button class="btn success" id="btn-start" onclick="api('/api/start','POST')">Start</button>
+      <button class="btn" id="btn-stop" onclick="api('/api/stop','POST')">Stop</button>
+      <button class="btn danger" id="btn-emergency" onclick="if(confirm('Confirm emergency stop?'))api('/api/emergency-stop','POST')">Emergency Stop</button>
+      <button class="btn" onclick="api('/api/circuit/reset','POST')">Reset Circuit</button>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Balance</h2>
+      <div class="stat" id="total-balance">--</div>
+      <div class="stat-label">Total Balance (USDT)</div>
+      <div style="margin-top:8px">
+        <span style="color:var(--muted)">Available:</span> <span id="avail-balance">--</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Daily P&L</h2>
+      <div class="stat" id="daily-pnl">--</div>
+      <div class="stat-label" id="daily-pnl-pct">--</div>
+    </div>
+
+    <div class="card">
+      <h2>Unrealized P&L</h2>
+      <div class="stat" id="unrealized-pnl">--</div>
+      <div class="stat-label" id="position-count">0 positions</div>
+    </div>
+
+    <div class="card">
+      <h2>Circuit Breaker</h2>
+      <div id="circuit-status" class="stat" style="font-size:16px">OK</div>
+      <div class="stat-label" id="circuit-detail">--</div>
+    </div>
+
+    <div class="card full-width">
+      <h2>Equity Curve</h2>
+      <div class="chart-container">
+        <canvas id="equity-chart"></canvas>
+      </div>
+    </div>
+
+    <div class="card full-width">
+      <h2>Open Positions</h2>
+      <table>
+        <thead>
+          <tr><th>Symbol</th><th>Side</th><th>Size</th><th>Entry</th><th>Mark</th><th>PnL</th><th>Leverage</th></tr>
+        </thead>
+        <tbody id="positions-body">
+          <tr><td colspan="7" style="color:var(--muted)">No positions</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card full-width">
+      <h2>AI Decision Log</h2>
+      <div class="log-stream" id="decision-log">
+        <div class="log-entry" style="color:var(--muted)">Waiting for decisions...</div>
+      </div>
+    </div>
+
+    <div class="card full-width">
+      <h2>Recent Trades</h2>
+      <table>
+        <thead>
+          <tr><th>Time</th><th>Symbol</th><th>Action</th><th>Side</th><th>Amount</th><th>Price</th><th>Confidence</th></tr>
+        </thead>
+        <tbody id="trades-body">
+          <tr><td colspan="7" style="color:var(--muted)">No trades yet</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
