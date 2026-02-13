@@ -1,4 +1,4 @@
-import { getExchange } from './client';
+import { getExchange, getPublicExchange } from './client';
 import { logger } from '../utils/logger';
 import { retry } from '../utils/retry';
 
@@ -25,23 +25,23 @@ export interface MarketSnapshot {
 }
 
 export async function fetchTicker(symbol: string) {
-  const ex = getExchange();
+  const ex = getPublicExchange();
   return retry(() => ex.fetchTicker(symbol), `fetchTicker(${symbol})`);
 }
 
 export async function fetchKlines(symbol: string, timeframe: string, limit = 50) {
-  const ex = getExchange();
+  const ex = getPublicExchange();
   return retry(() => ex.fetchOHLCV(symbol, timeframe, undefined, limit), `fetchKlines(${symbol},${timeframe})`);
 }
 
 export async function fetchOrderbook(symbol: string, limit = 20) {
-  const ex = getExchange();
+  const ex = getPublicExchange();
   return retry(() => ex.fetchOrderBook(symbol, limit), `fetchOrderbook(${symbol})`);
 }
 
 export async function fetchFundingRate(symbol: string): Promise<number | null> {
   try {
-    const ex = getExchange();
+    const ex = getPublicExchange();
     const rate = await retry(() => ex.fetchFundingRate(symbol), `fetchFundingRate(${symbol})`);
     return rate?.fundingRate ?? null;
   } catch {
@@ -51,7 +51,7 @@ export async function fetchFundingRate(symbol: string): Promise<number | null> {
 }
 
 export async function fetchTopSymbolsByVolume(limit = 30): Promise<string[]> {
-  const ex = getExchange();
+  const ex = getPublicExchange();
   const tickers = await retry(() => ex.fetchTickers(), 'fetchTickers');
   return Object.values(tickers)
     .filter((t) => t.symbol.endsWith('/USDT') && t.quoteVolume && t.quoteVolume > 0)

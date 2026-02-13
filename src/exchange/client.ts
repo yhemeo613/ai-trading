@@ -4,6 +4,26 @@ import { getProxyAgent } from '../utils/proxy';
 import { logger } from '../utils/logger';
 
 let exchange: Exchange | null = null;
+let publicExchange: Exchange | null = null;
+
+function applyProxy(ex: Exchange) {
+  const agent = getProxyAgent();
+  if (agent) {
+    (ex as any).agent = agent;
+    (ex as any).httpAgent = agent;
+    (ex as any).httpsAgent = agent;
+  }
+}
+
+function applyTestnetUrls(ex: Exchange) {
+  const testUrls = (ex as any).urls['test'];
+  if (testUrls) {
+    (ex as any).urls['api'] = {
+      ...(ex as any).urls['api'],
+      ...testUrls,
+    };
+  }
+}
 
 export function getExchange(): Exchange {
   if (exchange) return exchange;
@@ -14,38 +34,39 @@ export function getExchange(): Exchange {
       apiKey: config.binance.apiKey,
       secret: config.binance.secret,
       enableRateLimit: true,
-      options: {
-        defaultType: 'future',
-      },
+      options: { defaultType: 'future' },
     });
-    // Swap API URLs with testnet URLs
-    const testUrls = (exchange as any).urls['test'];
-    if (testUrls) {
-      (exchange as any).urls['api'] = {
-        ...(exchange as any).urls['api'],
-        ...testUrls,
-      };
-      logger.info('Switched to testnet URLs');
-    }
+    applyTestnetUrls(exchange);
   } else {
     logger.info('Initializing ccxt binance futures LIVE client');
     exchange = new ccxt.binance({
       apiKey: config.binanceLive.apiKey,
       secret: config.binanceLive.secret,
       enableRateLimit: true,
-      options: {
-        defaultType: 'future',
-      },
+      options: { defaultType: 'future' },
     });
   }
 
-  const agent = getProxyAgent();
-  if (agent) {
-    (exchange as any).agent = agent;
-    (exchange as any).httpAgent = agent;
-    (exchange as any).httpsAgent = agent;
-    logger.info('Proxy agent attached to exchange client');
-  }
-
+  applyProxy(exchange);
+  logger.info('Exchange client initialized' + (getProxyAgent() ? ' with proxy' : ''));
   return exchange;
+}
+
+/**
+ * Public-only exchange (no API key) for market data.
+ * Fallback when API key is invalid/expired.
+ */
+export function getPublicExchange(): Exchange {
+  if (publicExchange) return publicExchange;
+
+  publicExchange = new ccxt.binance({
+    enableRateLimit: true,
+    options: { defaultType: 'future' },
+  });
+
+  if (config.testnetOnly) {
+    applyTestnetUrls(publicExchange);
+  }
+  applyProxy(publicExchange);
+  return publicExchange;
 }

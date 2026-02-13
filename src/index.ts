@@ -7,7 +7,7 @@ import { getDb, closeDb } from './persistence/db';
 import { initWebSocket } from './dashboard/websocket';
 import dashboardRoutes from './dashboard/routes';
 import { startLoop, stopLoop } from './core/loop';
-import { getExchange } from './exchange/client';
+import { getExchange, getPublicExchange } from './exchange/client';
 
 const app = express();
 app.use(express.json());
@@ -28,11 +28,16 @@ async function boot() {
   // Init database
   getDb();
 
-  // Verify exchange connectivity
+  // Verify exchange connectivity (public endpoints don't need API key)
   try {
+    const pub = getPublicExchange();
+    await pub.loadMarkets();
+    logger.info(`Exchange connected, ${Object.keys(pub.markets).length} markets loaded`);
+    // Share markets with authenticated exchange
     const ex = getExchange();
-    await ex.loadMarkets();
-    logger.info(`Exchange connected, ${Object.keys(ex.markets).length} markets loaded`);
+    ex.markets = pub.markets;
+    (ex as any).markets_by_id = (pub as any).markets_by_id;
+    (ex as any).symbols = (pub as any).symbols;
   } catch (err: any) {
     logger.error('Exchange connection failed', { error: err.message });
     logger.error('Bot will start but trading may fail until exchange is reachable');
