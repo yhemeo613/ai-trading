@@ -54,7 +54,7 @@ export async function fetchTopSymbolsByVolume(limit = 30): Promise<string[]> {
   const ex = getPublicExchange();
   const tickers = await retry(() => ex.fetchTickers(), 'fetchTickers');
   return Object.values(tickers)
-    .filter((t) => t.symbol.endsWith('/USDT') && t.quoteVolume && t.quoteVolume > 0)
+    .filter((t) => t.symbol.endsWith('/USDT:USDT') && t.quoteVolume && t.quoteVolume > 0)
     .sort((a, b) => (b.quoteVolume ?? 0) - (a.quoteVolume ?? 0))
     .slice(0, limit)
     .map((t) => t.symbol);
