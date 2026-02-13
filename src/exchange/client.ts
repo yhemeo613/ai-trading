@@ -29,7 +29,7 @@ export function getExchange(): Exchange {
   if (exchange) return exchange;
 
   if (config.testnetOnly) {
-    logger.info('Initializing ccxt binance futures TESTNET client');
+    logger.info('正在初始化 ccxt 币安合约测试网客户端');
     exchange = new ccxt.binance({
       apiKey: config.binance.apiKey,
       secret: config.binance.secret,
@@ -38,7 +38,7 @@ export function getExchange(): Exchange {
     });
     applyTestnetUrls(exchange);
   } else {
-    logger.info('Initializing ccxt binance futures LIVE client');
+    logger.info('正在初始化 ccxt 币安合约实盘客户端');
     exchange = new ccxt.binance({
       apiKey: config.binanceLive.apiKey,
       secret: config.binanceLive.secret,
@@ -48,7 +48,7 @@ export function getExchange(): Exchange {
   }
 
   applyProxy(exchange);
-  logger.info('Exchange client initialized' + (getProxyAgent() ? ' with proxy' : ''));
+  logger.info('交易所客户端已初始化' + (getProxyAgent() ? '（使用代理）' : ''));
   return exchange;
 }
 

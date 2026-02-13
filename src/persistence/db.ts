@@ -18,7 +18,7 @@ export function getDb(): Database.Database {
   db.pragma('foreign_keys = ON');
 
   initTables(db);
-  logger.info('SQLite database initialized', { path: DB_PATH });
+  logger.info('SQLite 数据库已初始化', { path: DB_PATH });
   return db;
 }
 

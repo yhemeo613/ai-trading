@@ -8,7 +8,29 @@ import { isRunning, startLoop, stopLoop } from '../core/loop';
 import { getAvailableProviders, getProviderStats } from '../ai/router';
 import { logger } from '../utils/logger';
 
+import { fetchTicker } from '../exchange/market-data';
+
 const router = Router();
+
+const MAIN_TICKERS = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'BNB/USDT:USDT', 'XRP/USDT:USDT', 'DOGE/USDT:USDT'];
+
+router.get('/api/tickers', async (_req, res) => {
+  try {
+    const results = await Promise.allSettled(
+      MAIN_TICKERS.map(async (sym) => {
+        const t = await fetchTicker(sym);
+        const short = sym.replace('/USDT:USDT', '');
+        return { name: short, price: t.last ?? 0, change: t.percentage ?? 0 };
+      })
+    );
+    const tickers = results
+      .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
+      .map(r => r.value);
+    res.json(tickers);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 router.get('/api/status', async (_req, res) => {
   try {
@@ -24,7 +46,7 @@ router.get('/api/status', async (_req, res) => {
       providerStats: getProviderStats(),
     });
   } catch (err: any) {
-    logger.error('Status API error', { error: err.message });
+    logger.error('状态接口错误', { error: err.message });
     res.status(500).json({ error: err.message });
   }
 });
@@ -77,21 +99,23 @@ router.post('/api/circuit/reset', (_req, res) => {
 router.post('/api/emergency-stop', (_req, res) => {
   emergencyStop();
   stopLoop();
-  res.json({ ok: true, message: 'Emergency stop activated' });
+  res.json({ ok: true, message: '紧急停止已激活' });
 });
 
 router.post('/api/start', (_req, res) => {
   if (isRunning()) {
-    res.json({ ok: false, message: 'Already running' });
+    res.json({ ok: false, message: '已在运行中' });
     return;
   }
-  startLoop();
-  res.json({ ok: true, message: 'Trading loop started' });
+  startLoop().catch((err) => {
+    logger.error('交易循环错误', { error: err.message });
+  });
+  res.json({ ok: true, message: '交易循环已启动' });
 });
 
 router.post('/api/stop', (_req, res) => {
   stopLoop();
-  res.json({ ok: true, message: 'Trading loop stopped' });
+  res.json({ ok: true, message: '交易循环已停止' });
 });
 
 export default router;

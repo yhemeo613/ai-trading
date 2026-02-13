@@ -11,7 +11,12 @@ import { getExchange, getPublicExchange } from './exchange/client';
 
 const app = express();
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'dashboard', 'public')));
+
+// Serve dashboard: try src/ first (dev), fallback to dist/ (production)
+const publicPathDev = path.join(__dirname, '..', 'src', 'dashboard', 'public');
+const publicPathProd = path.join(__dirname, 'dashboard', 'public');
+const publicPath = require('fs').existsSync(publicPathDev) ? publicPathDev : publicPathProd;
+app.use(express.static(publicPath));
 app.use(dashboardRoutes);
 
 app.get('/api/health', (_req, res) => {
@@ -22,8 +27,8 @@ const server = http.createServer(app);
 initWebSocket(server);
 
 async function boot() {
-  logger.info('=== AI USDT Futures Trading Bot ===');
-  logger.info(`Mode: ${config.testnetOnly ? 'TESTNET' : 'LIVE'}`);
+  logger.info('=== AI USDT 合约交易机器人 ===');
+  logger.info(`模式: ${config.testnetOnly ? '测试网' : '实盘'}`);
 
   // Init database
   getDb();
@@ -32,37 +37,39 @@ async function boot() {
   try {
     const pub = getPublicExchange();
     await pub.loadMarkets();
-    logger.info(`Exchange connected, ${Object.keys(pub.markets).length} markets loaded`);
+    logger.info(`交易所已连接，已加载 ${Object.keys(pub.markets).length} 个交易对`);
     // Share markets with authenticated exchange
     const ex = getExchange();
     ex.markets = pub.markets;
     (ex as any).markets_by_id = (pub as any).markets_by_id;
     (ex as any).symbols = (pub as any).symbols;
   } catch (err: any) {
-    logger.error('Exchange connection failed', { error: err.message });
-    logger.error('Bot will start but trading may fail until exchange is reachable');
+    logger.error('交易所连接失败', { error: err.message });
+    logger.error('机器人将启动，但在交易所恢复连接前交易可能失败');
   }
 
   // Start HTTP server
   server.listen(config.server.port, () => {
-    logger.info(`Dashboard: http://localhost:${config.server.port}`);
+    logger.info(`控制面板: http://localhost:${config.server.port}`);
   });
 
   server.on('error', (err: any) => {
     if (err.code === 'EADDRINUSE') {
-      logger.error(`Port ${config.server.port} is in use. Dashboard disabled, trading loop continues.`);
+      logger.error(`端口 ${config.server.port} 已被占用，控制面板已禁用，交易循环继续运行`);
     } else {
-      logger.error('Server error', { error: err.message });
+      logger.error('服务器错误', { error: err.message });
     }
   });
 
   // Auto-start trading loop
-  startLoop();
+  startLoop().catch((err) => {
+    logger.error('交易循环错误', { error: err.message });
+  });
 }
 
 // Graceful shutdown
 function shutdown() {
-  logger.info('Shutting down...');
+  logger.info('正在关闭...');
   stopLoop();
   closeDb();
   server.close();
@@ -72,14 +79,14 @@ function shutdown() {
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 process.on('uncaughtException', (err) => {
-  logger.error('Uncaught exception', { error: err.message, stack: err.stack });
+  logger.error('未捕获的异常', { error: err.message, stack: err.stack });
 });
 process.on('unhandledRejection', (reason) => {
-  logger.error('Unhandled rejection', { reason: String(reason) });
+  logger.error('未处理的 Promise 拒绝', { reason: String(reason) });
 });
 
 boot().catch((err) => {
-  logger.error('Boot failed', { error: err.message });
+  logger.error('启动失败', { error: err.message });
   process.exit(1);
 });
 

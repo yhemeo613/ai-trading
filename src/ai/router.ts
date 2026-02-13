@@ -30,13 +30,13 @@ function getOrderedProviders(): AIProvider[] {
 export async function aiChat(messages: AIMessage[]): Promise<AIResponse> {
   const providers = getOrderedProviders();
   if (providers.length === 0) {
-    throw new Error('No AI providers available. Check API keys in .env');
+    throw new Error('没有可用的 AI 提供商，请检查 .env 中的 API 密钥');
   }
 
   let lastError: Error | undefined;
   for (const provider of providers) {
     try {
-      logger.info(`Calling AI provider: ${provider.name}`);
+      logger.info(`正在调用 AI 提供商: ${provider.name}`);
       const response = await provider.chat(messages);
       failCounts.set(provider.name, 0);
       return response;
@@ -44,13 +44,13 @@ export async function aiChat(messages: AIMessage[]): Promise<AIResponse> {
       lastError = err instanceof Error ? err : new Error(String(err));
       const count = (failCounts.get(provider.name) ?? 0) + 1;
       failCounts.set(provider.name, count);
-      logger.warn(`AI provider ${provider.name} failed (count: ${count})`, {
+      logger.warn(`AI 提供商 ${provider.name} 调用失败 (次数: ${count})`, {
         error: lastError.message,
       });
     }
   }
 
-  throw new Error(`All AI providers failed. Last error: ${lastError?.message}`);
+  throw new Error(`所有 AI 提供商均失败，最后错误: ${lastError?.message}`);
 }
 
 export function getAvailableProviders(): string[] {

@@ -14,13 +14,13 @@ export async function retry<T>(
       lastError = err instanceof Error ? err : new Error(String(err));
       if (attempt < maxAttempts) {
         const delay = baseDelayMs * Math.pow(2, attempt - 1);
-        logger.warn(`${label} attempt ${attempt} failed, retrying in ${delay}ms`, {
+        logger.warn(`${label} 第 ${attempt} 次尝试失败，${delay}ms 后重试`, {
           error: lastError.message,
         });
         await new Promise((r) => setTimeout(r, delay));
       }
     }
   }
-  logger.error(`${label} failed after ${maxAttempts} attempts`, { error: lastError?.message });
+  logger.error(`${label} 在 ${maxAttempts} 次尝试后失败`, { error: lastError?.message });
   throw lastError;
 }

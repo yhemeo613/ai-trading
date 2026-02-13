@@ -48,7 +48,7 @@ export async function aiFetch(url: string, options: { method: string; headers: R
           try {
             resolve(JSON.parse(data));
           } catch {
-            reject(new Error(`Invalid JSON response: ${data.slice(0, 200)}`));
+            reject(new Error(`无效的 JSON 响应: ${data.slice(0, 200)}`));
           }
         });
       }
@@ -56,7 +56,7 @@ export async function aiFetch(url: string, options: { method: string; headers: R
     req.on('error', reject);
     req.setTimeout(60000, () => {
       req.destroy();
-      reject(new Error('Request timeout (60s)'));
+      reject(new Error('请求超时 (60秒)'));
     });
     req.write(options.body);
     req.end();

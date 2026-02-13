@@ -45,7 +45,7 @@ export async function fetchFundingRate(symbol: string): Promise<number | null> {
     const rate = await retry(() => ex.fetchFundingRate(symbol), `fetchFundingRate(${symbol})`);
     return rate?.fundingRate ?? null;
   } catch {
-    logger.warn(`Failed to fetch funding rate for ${symbol}`);
+    logger.warn(`获取 ${symbol} 资金费率失败`);
     return null;
   }
 }

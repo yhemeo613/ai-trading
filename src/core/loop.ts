@@ -7,8 +7,9 @@ import { checkHardLimits } from '../risk/hard-limits';
 import { executeDecision } from '../exchange/executor';
 import { isCircuitTripped, recordTradeResult, recordApiFailure, recordApiSuccess, updateDailyLoss, getCircuitState } from '../risk/circuit-breaker';
 import { insertTrade } from '../persistence/models/trade';
-import { insertDecision } from '../persistence/models/decision';
+import { insertDecision, updateDecisionExecuted } from '../persistence/models/decision';
 import { insertSnapshot, updateDailyPnl } from '../persistence/models/snapshot';
+import { getDb } from '../persistence/db';
 import { broadcast } from '../dashboard/websocket';
 
 let activePairs: string[] = [];
@@ -25,13 +26,13 @@ export function isRunning() { return running; }
 export async function startLoop() {
   if (running) return;
   running = true;
-  logger.info('Trading loop started');
+  logger.info('交易循环已启动');
 
   while (running) {
     try {
       await tick();
     } catch (err) {
-      logger.error('Loop tick error', { error: err instanceof Error ? err.message : String(err) });
+      logger.error('循环执行错误', { error: err instanceof Error ? err.message : String(err) });
       recordApiFailure();
     }
     await sleep(LOOP_INTERVAL);
@@ -40,14 +41,14 @@ export async function startLoop() {
 
 export function stopLoop() {
   running = false;
-  logger.info('Trading loop stopped');
+  logger.info('交易循环已停止');
 }
 
 async function tick() {
   // Check circuit breaker
   if (isCircuitTripped()) {
     const state = getCircuitState();
-    logger.warn(`Circuit breaker active: ${state.reason}`);
+    logger.warn(`熔断器已激活: ${state.reason}`);
     broadcast({ type: 'circuit', data: state });
     return;
   }
@@ -62,7 +63,7 @@ async function tick() {
       recordApiSuccess();
       broadcast({ type: 'pairs', data: activePairs });
     } catch (err) {
-      logger.error('Pair selection failed', { error: err instanceof Error ? err.message : String(err) });
+      logger.error('交易对选择失败', { error: err instanceof Error ? err.message : String(err) });
       recordApiFailure();
       if (activePairs.length === 0) return;
     }
@@ -88,7 +89,6 @@ async function tick() {
   updateDailyPnl(today, balance.totalBalance, 0, 0);
 
   // Check daily loss
-  const { getDb } = await import('../persistence/db');
   const dailyRow = getDb().prepare('SELECT * FROM daily_pnl WHERE date = ?').get(today) as any;
   if (dailyRow && dailyRow.starting_balance > 0) {
     const lossPct = ((dailyRow.starting_balance - balance.totalBalance) / dailyRow.starting_balance) * 100;
@@ -108,7 +108,7 @@ async function tick() {
       await processSymbol(symbol, balance, positions);
       recordApiSuccess();
     } catch (err) {
-      logger.error(`Error processing ${symbol}`, { error: err instanceof Error ? err.message : String(err) });
+      logger.error(`处理 ${symbol} 时出错`, { error: err instanceof Error ? err.message : String(err) });
       recordApiFailure();
     }
 
@@ -122,14 +122,14 @@ async function processSymbol(
   balance: ReturnType<typeof import('../exchange/account').fetchBalance> extends Promise<infer T> ? T : never,
   positions: ReturnType<typeof import('../exchange/account').fetchPositions> extends Promise<infer T> ? T : never
 ) {
-  logger.info(`Processing ${symbol}`);
+  logger.info(`正在处理 ${symbol}`);
 
   // Fetch market data
   const snapshot = await fetchMarketSnapshot(symbol);
 
   // Run AI session
   const decision = await runTradingSession(snapshot, balance, positions);
-  logger.info(`AI decision for ${symbol}: ${decision.action} (confidence: ${decision.confidence})`, {
+  logger.info(`${symbol} AI 决策: ${decision.action} (置信度: ${decision.confidence})`, {
     reasoning: decision.reasoning,
   });
 
@@ -137,7 +137,7 @@ async function processSymbol(
   const riskCheck = checkHardLimits(decision, balance, positions);
 
   // Persist decision
-  insertDecision({
+  const decisionResult = insertDecision({
     symbol: decision.symbol,
     action: decision.action,
     confidence: decision.confidence,
@@ -147,11 +147,12 @@ async function processSymbol(
     riskReason: riskCheck.reason,
     executed: false,
   });
+  const decisionId = Number(decisionResult.lastInsertRowid);
 
   broadcast({ type: 'decision', data: { decision, riskCheck } });
 
   if (!riskCheck.passed) {
-    logger.warn(`Risk check failed for ${symbol}: ${riskCheck.reason}`);
+    logger.warn(`${symbol} 风控检查未通过: ${riskCheck.reason}`);
     return;
   }
 
@@ -162,6 +163,9 @@ async function processSymbol(
   // Execute
   const result = await executeDecision(decision, balance);
   if (result) {
+    // Mark decision as executed
+    updateDecisionExecuted(decisionId);
+
     insertTrade({
       symbol: decision.symbol,
       action: decision.action,
@@ -176,12 +180,28 @@ async function processSymbol(
       reasoning: decision.reasoning,
     });
 
-    // Update daily PnL trade count
-    const today = new Date().toISOString().slice(0, 10);
-    updateDailyPnl(today, balance.totalBalance, 0, 1);
+    // Track trade result for circuit breaker (use 0 for now, actual PnL tracked on close)
+    if (decision.action === 'CLOSE') {
+      // For close actions, estimate PnL from the position being closed
+      const closedPos = positions.find((p) => p.symbol === decision.symbol);
+      if (closedPos) {
+        const pnlPct = closedPos.unrealizedPnl / (closedPos.notional / closedPos.leverage) * 100;
+        recordTradeResult(pnlPct);
+        // Update daily PnL with realized PnL
+        const today = new Date().toISOString().slice(0, 10);
+        updateDailyPnl(today, balance.totalBalance, closedPos.unrealizedPnl, 1);
+      } else {
+        const today = new Date().toISOString().slice(0, 10);
+        updateDailyPnl(today, balance.totalBalance, 0, 1);
+      }
+    } else {
+      // Update daily PnL trade count
+      const today = new Date().toISOString().slice(0, 10);
+      updateDailyPnl(today, balance.totalBalance, 0, 1);
+    }
 
     broadcast({ type: 'trade', data: { decision, result } });
-    logger.info(`Trade executed: ${result.side} ${result.amount} ${symbol} @ ${result.price}`);
+    logger.info(`交易已执行: ${result.side} ${result.amount} ${symbol} @ ${result.price}`);
   }
 }
 

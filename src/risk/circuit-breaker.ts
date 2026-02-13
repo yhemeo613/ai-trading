@@ -29,7 +29,7 @@ export function isCircuitTripped(): boolean {
   if (state.tripped) {
     const elapsed = Date.now() - state.trippedAt;
     if (elapsed >= state.cooldownMs) {
-      logger.info('Circuit breaker cooldown expired, resetting');
+      logger.info('熔断器冷却期已过，正在重置');
       resetCircuit();
       return false;
     }
@@ -46,7 +46,7 @@ export function recordTradeResult(pnlPct: number) {
   if (pnlPct < 0) {
     state.consecutiveLosses++;
     if (state.consecutiveLosses >= 3) {
-      tripCircuit(`3 consecutive losses`);
+      tripCircuit(`连续亏损 3 次`);
     }
   } else {
     state.consecutiveLosses = 0;
@@ -56,14 +56,14 @@ export function recordTradeResult(pnlPct: number) {
 export function updateDailyLoss(dailyLossPct: number) {
   state.dailyLossPct = dailyLossPct;
   if (dailyLossPct >= config.risk.maxDailyLossPct) {
-    tripCircuit(`Daily loss ${dailyLossPct.toFixed(2)}% exceeds ${config.risk.maxDailyLossPct}%`);
+    tripCircuit(`日亏损 ${dailyLossPct.toFixed(2)}% 超过限制 ${config.risk.maxDailyLossPct}%`);
   }
 }
 
 export function recordApiFailure() {
   state.consecutiveApiFailures++;
   if (state.consecutiveApiFailures >= 5) {
-    tripCircuit('5 consecutive API failures');
+    tripCircuit('连续 5 次 API 调用失败');
   }
 }
 
@@ -75,7 +75,7 @@ export function tripCircuit(reason: string) {
   state.tripped = true;
   state.reason = reason;
   state.trippedAt = Date.now();
-  logger.error(`CIRCUIT BREAKER TRIPPED: ${reason}`);
+  logger.error(`熔断器已触发: ${reason}`);
 }
 
 export function resetCircuit() {
@@ -85,13 +85,13 @@ export function resetCircuit() {
   state.consecutiveLosses = 0;
   state.consecutiveApiFailures = 0;
   state.manualStop = false;
-  logger.info('Circuit breaker reset');
+  logger.info('熔断器已重置');
 }
 
 export function emergencyStop() {
   state.manualStop = true;
   state.tripped = true;
-  state.reason = 'Manual emergency stop';
+  state.reason = '手动紧急停止';
   state.trippedAt = Date.now();
-  logger.error('EMERGENCY STOP activated');
+  logger.error('紧急停止已激活');
 }

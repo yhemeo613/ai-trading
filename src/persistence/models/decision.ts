@@ -24,6 +24,11 @@ export function insertDecision(decision: {
   );
 }
 
+export function updateDecisionExecuted(id: number) {
+  const db = getDb();
+  db.prepare('UPDATE decisions SET executed = 1 WHERE id = ?').run(id);
+}
+
 export function getRecentDecisions(limit = 100) {
   const db = getDb();
   return db.prepare('SELECT * FROM decisions ORDER BY id DESC LIMIT ?').all(limit);

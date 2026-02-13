@@ -5,7 +5,7 @@ dotenv.config({ path: path.resolve(__dirname, '..', '.env') });
 
 function env(key: string, fallback?: string): string {
   const val = process.env[key] ?? fallback;
-  if (val === undefined) throw new Error(`Missing env var: ${key}`);
+  if (val === undefined) throw new Error(`缺少环境变量: ${key}`);
   return val;
 }
 

@@ -6,42 +6,53 @@ import { AccountBalance, PositionInfo } from '../exchange/account';
 import { logger } from '../utils/logger';
 
 function formatKlines(klines: any[][], label: string): string {
-  if (!klines.length) return `${label}: no data`;
+  if (!klines.length) return `${label}: 无数据`;
   const recent = klines.slice(-10);
   const lines = recent.map((k) => {
     const [ts, open, high, low, close, vol] = k;
     const date = new Date(ts).toISOString().slice(0, 16);
-    return `  ${date} O:${open} H:${high} L:${low} C:${close} V:${vol}`;
+    return `  ${date} 开:${open} 高:${high} 低:${low} 收:${close} 量:${vol}`;
   });
-  return `${label} (last ${recent.length} candles):\n${lines.join('\n')}`;
+  return `${label} (最近 ${recent.length} 根K线):\n${lines.join('\n')}`;
 }
 
 function buildSystemPrompt(): string {
-  return `You are an expert cryptocurrency futures trader AI. You analyze market data and make trading decisions.
+  return `你是一位专业的加密货币合约交易 AI 分析师。你需要分析市场数据并做出交易决策。
 
-RULES:
-- You trade USDT-margined perpetual futures on Binance
-- Return ONLY valid JSON matching the required schema, no other text
-- Be conservative: only trade when you have high confidence (>0.6)
-- Always set stop loss and take profit
-- Position size: 1-10% of available balance
-- Leverage: 1-10x (prefer lower leverage)
-- Consider multiple timeframes, orderbook depth, funding rate, and existing positions
-- If unsure, return HOLD
+你的角色与思路:
+- 你是一位经验丰富的量化交易员，擅长技术分析和风险管理
+- 你会综合分析多个时间周期的K线走势、订单簿深度、资金费率等数据
+- 你偏向保守策略，只在高置信度(>0.6)时才开仓
+- 你始终设置止损和止盈来控制风险
 
-RESPONSE FORMAT (strict JSON):
+交易规则:
+- 交易标的: 币安 USDT 永续合约
+- 仓位大小: 可用余额的 1-10%
+- 杠杆倍数: 1-10倍（优先使用低杠杆）
+- 必须设置止损和止盈价格
+- 综合考虑多时间周期、订单簿、资金费率和现有持仓
+- 不确定时返回 HOLD（观望）
+
+请用中文详细说明你的分析思路，包括:
+1. 趋势判断（多头/空头/震荡）
+2. 关键支撑位和阻力位
+3. 成交量和资金费率分析
+4. 风险评估
+5. 最终决策理由
+
+返回格式（严格 JSON）:
 {
   "action": "LONG" | "SHORT" | "CLOSE" | "HOLD" | "ADJUST",
-  "symbol": "BTC/USDT",
+  "symbol": "BTC/USDT:USDT",
   "confidence": 0.0-1.0,
-  "reasoning": "brief explanation",
+  "reasoning": "用中文详细说明你的分析思路和决策理由",
   "params": {
     "positionSizePercent": 1-10,
     "leverage": 1-10,
     "stopLossPrice": number,
     "takeProfitPrice": number,
     "orderType": "MARKET" | "LIMIT"
-  } or null (for HOLD)
+  } 或 null（观望时）
 }`;
 }
 
@@ -52,42 +63,42 @@ function buildUserPrompt(
 ): string {
   const posStr = positions.length
     ? positions.map((p) =>
-        `  ${p.symbol} ${p.side} ${p.contracts} contracts @ ${p.entryPrice}, mark: ${p.markPrice}, PnL: ${p.unrealizedPnl.toFixed(2)} USDT, leverage: ${p.leverage}x`
+        `  ${p.symbol} ${p.side === 'long' ? '多' : '空'} ${p.contracts} 张 @ ${p.entryPrice}, 标记价: ${p.markPrice}, 盈亏: ${p.unrealizedPnl.toFixed(2)} USDT, 杠杆: ${p.leverage}x`
       ).join('\n')
-    : '  None';
+    : '  无';
 
-  return `ANALYZE THIS MARKET DATA AND MAKE A TRADING DECISION:
+  return `请分析以下市场数据并做出交易决策:
 
-Symbol: ${snapshot.symbol}
+交易对: ${snapshot.symbol}
 
-ACCOUNT:
-  Total Balance: ${balance.totalBalance.toFixed(2)} USDT
-  Available: ${balance.availableBalance.toFixed(2)} USDT
-  Used Margin: ${balance.usedMargin.toFixed(2)} USDT
+账户状态:
+  总余额: ${balance.totalBalance.toFixed(2)} USDT
+  可用余额: ${balance.availableBalance.toFixed(2)} USDT
+  已用保证金: ${balance.usedMargin.toFixed(2)} USDT
 
-CURRENT POSITIONS:
+当前持仓:
 ${posStr}
 
-TICKER:
-  Last: ${snapshot.ticker.last}
-  Bid: ${snapshot.ticker.bid}
-  Ask: ${snapshot.ticker.ask}
-  24h Volume: ${snapshot.ticker.quoteVolume.toFixed(0)} USDT
-  24h Change: ${snapshot.ticker.percentage?.toFixed(2)}%
+行情数据:
+  最新价: ${snapshot.ticker.last}
+  买一: ${snapshot.ticker.bid}
+  卖一: ${snapshot.ticker.ask}
+  24h成交额: ${snapshot.ticker.quoteVolume.toFixed(0)} USDT
+  24h涨跌幅: ${snapshot.ticker.percentage?.toFixed(2)}%
 
-FUNDING RATE: ${snapshot.fundingRate !== null ? (snapshot.fundingRate * 100).toFixed(4) + '%' : 'N/A'}
+资金费率: ${snapshot.fundingRate !== null ? (snapshot.fundingRate * 100).toFixed(4) + '%' : '暂无'}
 
-ORDERBOOK (top 10):
-  Bids: ${snapshot.orderbook.bids.slice(0, 5).map(([p, q]) => `${p}@${q}`).join(', ')}
-  Asks: ${snapshot.orderbook.asks.slice(0, 5).map(([p, q]) => `${p}@${q}`).join(', ')}
+订单簿 (前5档):
+  买盘: ${snapshot.orderbook.bids.slice(0, 5).map(([p, q]) => `${p}@${q}`).join(', ')}
+  卖盘: ${snapshot.orderbook.asks.slice(0, 5).map(([p, q]) => `${p}@${q}`).join(', ')}
 
-${formatKlines(snapshot.klines['1h'], '1H KLINES')}
+${formatKlines(snapshot.klines['1h'], '1小时K线')}
 
-${formatKlines(snapshot.klines['4h'], '4H KLINES')}
+${formatKlines(snapshot.klines['4h'], '4小时K线')}
 
-${formatKlines(snapshot.klines['1d'], '1D KLINES')}
+${formatKlines(snapshot.klines['1d'], '日线')}
 
-Return your trading decision as JSON:`;
+请用中文详细分析后返回 JSON 决策:`;
 }
 
 export async function runTradingSession(
@@ -103,12 +114,12 @@ export async function runTradingSession(
   // First attempt
   try {
     const response = await aiChat(messages);
-    logger.info(`AI response from ${response.provider}/${response.model}`, {
+    logger.info(`AI 响应来自 ${response.provider}/${response.model}`, {
       usage: response.usage,
     });
     return parseAIDecision(response.content);
   } catch (firstErr) {
-    logger.warn('First AI attempt failed, retrying once', {
+    logger.warn('首次 AI 调用失败，正在重试', {
       error: firstErr instanceof Error ? firstErr.message : String(firstErr),
     });
 

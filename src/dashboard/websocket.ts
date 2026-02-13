@@ -1,15 +1,16 @@
 import WebSocket from 'ws';
+import http from 'http';
 import { logger } from '../utils/logger';
 
 let wss: WebSocket.Server | null = null;
 
-export function initWebSocket(server: any) {
+export function initWebSocket(server: http.Server) {
   wss = new WebSocket.Server({ server, path: '/ws' });
   wss.on('connection', (ws) => {
-    logger.info('WebSocket client connected');
-    ws.on('close', () => logger.info('WebSocket client disconnected'));
+    logger.info('WebSocket 客户端已连接');
+    ws.on('close', () => logger.info('WebSocket 客户端已断开'));
   });
-  logger.info('WebSocket server initialized on /ws');
+  logger.info('WebSocket 服务已在 /ws 路径初始化');
 }
 
 export function broadcast(data: any) {

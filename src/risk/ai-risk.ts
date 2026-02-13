@@ -9,7 +9,7 @@ export async function runPortfolioReview(
   positions: PositionInfo[]
 ): Promise<PortfolioReview | null> {
   if (positions.length === 0) {
-    logger.info('No positions to review');
+    logger.info('无持仓需要审查');
     return null;
   }
 
@@ -20,44 +20,44 @@ export async function runPortfolioReview(
   const messages: AIMessage[] = [
     {
       role: 'system',
-      content: `You are a portfolio risk manager for crypto futures. Review all open positions and suggest adjustments.
+      content: `你是一位加密货币合约投资组合风险管理师。请审查所有持仓并提出调整建议。
 
-Consider: correlation between positions, overall exposure, unrealized P&L, market conditions.
+考虑因素: 持仓间的相关性、整体敞口、未实现盈亏、市场状况。
 
-Return ONLY valid JSON:
+仅返回有效 JSON:
 {
   "actions": [
     {
-      "symbol": "BTC/USDT",
+      "symbol": "BTC/USDT:USDT",
       "action": "HOLD" | "CLOSE" | "ADJUST",
-      "reasoning": "brief explanation",
-      "adjustParams": { "newStopLoss": number, "newTakeProfit": number } or null
+      "reasoning": "用中文简要说明理由",
+      "adjustParams": { "newStopLoss": number, "newTakeProfit": number } 或 null
     }
   ],
-  "overallAssessment": "brief portfolio assessment"
+  "overallAssessment": "用中文简要评估整体投资组合状况"
 }`,
     },
     {
       role: 'user',
-      content: `PORTFOLIO REVIEW:
+      content: `投资组合审查:
 
-Account Balance: ${balance.totalBalance.toFixed(2)} USDT
-Available: ${balance.availableBalance.toFixed(2)} USDT
+账户余额: ${balance.totalBalance.toFixed(2)} USDT
+可用余额: ${balance.availableBalance.toFixed(2)} USDT
 
-Open Positions:
+当前持仓:
 ${posStr}
 
-Analyze and provide recommendations:`,
+请分析并提供建议:`,
     },
   ];
 
   try {
     const response = await aiChat(messages);
     const review = parsePortfolioReview(response.content);
-    logger.info('Portfolio review completed', { assessment: review.overallAssessment });
+    logger.info('投资组合审查完成', { assessment: review.overallAssessment });
     return review;
   } catch (err) {
-    logger.error('Portfolio review failed', {
+    logger.error('投资组合审查失败', {
       error: err instanceof Error ? err.message : String(err),
     });
     return null;

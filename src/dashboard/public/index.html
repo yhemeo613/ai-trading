@@ -3,89 +3,98 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AI Trading Bot Dashboard</title>
+  <title>AI 量化交易终端</title>
   <link rel="stylesheet" href="style.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 </head>
 <body>
-  <div class="header">
-    <div>
-      <h1>AI Trading Bot</h1>
-      <span id="status-badge" class="status-badge status-stopped">STOPPED</span>
-      <span id="ws-badge" class="status-badge" style="margin-left:8px">WS: --</span>
+
+  <nav class="nav">
+    <span class="nav-brand">AI 量化终端</span>
+    <div class="nav-links">
+      <a href="#">实时</a><span class="sep">|</span>
+      <a href="#">持仓</a><span class="sep">|</span>
+      <a href="#">交易</a><span class="sep">|</span>
+      <a href="#">日志</a>
     </div>
-    <div class="controls">
-      <button class="btn success" id="btn-start" onclick="api('/api/start','POST')">Start</button>
-      <button class="btn" id="btn-stop" onclick="api('/api/stop','POST')">Stop</button>
-      <button class="btn danger" id="btn-emergency" onclick="if(confirm('Confirm emergency stop?'))api('/api/emergency-stop','POST')">Emergency Stop</button>
-      <button class="btn" onclick="api('/api/circuit/reset','POST')">Reset Circuit</button>
+    <div class="nav-actions">
+      <span id="status-badge" class="badge badge-stopped">已停止</span>
+      <span id="ws-badge" class="badge badge-ws">WS: --</span>
+      <button class="btn btn-success" onclick="api('/api/start','POST')">启动</button>
+      <button class="btn" onclick="api('/api/stop','POST')">停止</button>
+      <button class="btn btn-danger" onclick="if(confirm('确认紧急停止？'))api('/api/emergency-stop','POST')">紧急停止</button>
+      <button class="btn" onclick="api('/api/circuit/reset','POST')">重置熔断</button>
+    </div>
+  </nav>
+
+  <div class="ticker-bar" id="ticker-bar">
+    <div class="ticker-item"><span class="ticker-name">BTC</span><span class="ticker-price" id="tick-BTC">--</span></div>
+    <div class="ticker-item"><span class="ticker-name">ETH</span><span class="ticker-price" id="tick-ETH">--</span></div>
+    <div class="ticker-item"><span class="ticker-name">SOL</span><span class="ticker-price" id="tick-SOL">--</span></div>
+    <div class="ticker-item"><span class="ticker-name">BNB</span><span class="ticker-price" id="tick-BNB">--</span></div>
+    <div class="ticker-item"><span class="ticker-name">XRP</span><span class="ticker-price" id="tick-XRP">--</span></div>
+    <div class="ticker-item"><span class="ticker-name">DOGE</span><span class="ticker-price" id="tick-DOGE">--</span></div>
+  </div>
+
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-label">总余额</div>
+      <div class="stat-value" id="total-balance">--</div>
+      <div class="stat-sub">USDT</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">可用余额</div>
+      <div class="stat-value" id="avail-balance">--</div>
+      <div class="stat-sub">USDT</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">今日盈亏</div>
+      <div class="stat-value" id="daily-pnl">--</div>
+      <div class="stat-sub" id="daily-pnl-pct">--</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">未实现盈亏</div>
+      <div class="stat-value" id="unrealized-pnl">--</div>
+      <div class="stat-sub" id="position-count">0 个持仓</div>
     </div>
   </div>
 
-  <div class="grid">
-    <div class="card">
-      <h2>Balance</h2>
-      <div class="stat" id="total-balance">--</div>
-      <div class="stat-label">Total Balance (USDT)</div>
-      <div style="margin-top:8px">
-        <span style="color:var(--muted)">Available:</span> <span id="avail-balance">--</span>
+  <div class="main">
+    <div class="content">
+      <div class="chart-wrap">
+        <div class="chart-header">权益曲线</div>
+        <div class="chart-container"><canvas id="equity-chart"></canvas></div>
+      </div>
+      <div class="tabs">
+        <button class="tab active" onclick="showPanel('positions',this)">当前持仓</button>
+        <button class="tab" onclick="showPanel('trades',this)">最近交易</button>
+      </div>
+      <div id="panel-positions" style="flex:1;overflow-y:auto">
+        <table><thead><tr><th>交易对</th><th>方向</th><th>数量</th><th>开仓价</th><th>标记价</th><th>盈亏</th><th>杠杆</th></tr></thead>
+        <tbody id="positions-body"><tr><td colspan="7" style="color:var(--text-subtle)">暂无持仓</td></tr></tbody></table>
+      </div>
+      <div id="panel-trades" style="display:none;flex:1;overflow-y:auto">
+        <table><thead><tr><th>时间</th><th>交易对</th><th>操作</th><th>方向</th><th>数量</th><th>价格</th><th>置信度</th></tr></thead>
+        <tbody id="trades-body"><tr><td colspan="7" style="color:var(--text-subtle)">暂无交易记录</td></tr></tbody></table>
       </div>
     </div>
 
-    <div class="card">
-      <h2>Daily P&L</h2>
-      <div class="stat" id="daily-pnl">--</div>
-      <div class="stat-label" id="daily-pnl-pct">--</div>
-    </div>
-
-    <div class="card">
-      <h2>Unrealized P&L</h2>
-      <div class="stat" id="unrealized-pnl">--</div>
-      <div class="stat-label" id="position-count">0 positions</div>
-    </div>
-
-    <div class="card">
-      <h2>Circuit Breaker</h2>
-      <div id="circuit-status" class="stat" style="font-size:16px">OK</div>
-      <div class="stat-label" id="circuit-detail">--</div>
-    </div>
-
-    <div class="card full-width">
-      <h2>Equity Curve</h2>
-      <div class="chart-container">
-        <canvas id="equity-chart"></canvas>
+    <div class="sidebar">
+      <div class="sidebar-section">
+        <div class="sidebar-section-title">熔断器状态</div>
+        <div class="circuit-status positive" id="circuit-status">正常</div>
+        <div class="circuit-detail" id="circuit-detail">--</div>
       </div>
-    </div>
-
-    <div class="card full-width">
-      <h2>Open Positions</h2>
-      <table>
-        <thead>
-          <tr><th>Symbol</th><th>Side</th><th>Size</th><th>Entry</th><th>Mark</th><th>PnL</th><th>Leverage</th></tr>
-        </thead>
-        <tbody id="positions-body">
-          <tr><td colspan="7" style="color:var(--muted)">No positions</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div class="card full-width">
-      <h2>AI Decision Log</h2>
-      <div class="log-stream" id="decision-log">
-        <div class="log-entry" style="color:var(--muted)">Waiting for decisions...</div>
+      <div class="sidebar-section">
+        <div class="sidebar-section-title">AI 分析思路</div>
+        <div class="ai-analysis-box" id="ai-analysis">&gt; 等待 AI 分析中...</div>
       </div>
-    </div>
-
-    <div class="card full-width">
-      <h2>Recent Trades</h2>
-      <table>
-        <thead>
-          <tr><th>Time</th><th>Symbol</th><th>Action</th><th>Side</th><th>Amount</th><th>Price</th><th>Confidence</th></tr>
-        </thead>
-        <tbody id="trades-body">
-          <tr><td colspan="7" style="color:var(--muted)">No trades yet</td></tr>
-        </tbody>
-      </table>
+      <div class="sidebar-section">
+        <div class="sidebar-section-title">决策日志</div>
+        <div class="log-stream" id="decision-log">
+          <div class="log-item" style="color:var(--text-subtle)">&gt; 等待决策...</div>
+        </div>
+      </div>
     </div>
   </div>
 
