@@ -1,18 +1,21 @@
 import { AIProvider, AIMessage, AIResponse } from './provider';
 import { config } from '../config';
 import { logger } from '../utils/logger';
-import { DeepSeekProvider } from './providers/deepseek';
-import { OpenAIProvider } from './providers/openai';
-import { AnthropicProvider } from './providers/anthropic';
-import { GeminiProvider } from './providers/gemini';
-import { QwenProvider } from './providers/qwen';
+import { OpenAICompatibleProvider } from './providers/openai-compatible';
 
 const allProviders: AIProvider[] = [
-  new DeepSeekProvider(),
-  new OpenAIProvider(),
-  new AnthropicProvider(),
-  new GeminiProvider(),
-  new QwenProvider(),
+  new OpenAICompatibleProvider({
+    name: 'deepseek',
+    apiKey: config.ai.deepseekKey,
+    baseUrl: config.ai.deepseekBaseUrl,
+    model: config.ai.deepseekModel,
+  }),
+  new OpenAICompatibleProvider({
+    name: 'qwen',
+    apiKey: config.ai.qwenKey,
+    baseUrl: config.ai.qwenBaseUrl,
+    model: config.ai.qwenModel,
+  }),
 ];
 
 let failCounts = new Map<string, number>();

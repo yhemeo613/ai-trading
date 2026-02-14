@@ -15,6 +15,7 @@ import { resetExchange, getExchange, getPublicExchange } from '../exchange/clien
 import { closePosition } from '../exchange/executor';
 import { fetchTicker } from '../exchange/market-data';
 import { getAllActivePlans, getActivePlan, getPendingPlans } from '../core/trading-plan';
+import { getAllActiveKeyLevels, getActiveKeyLevels } from '../core/key-price-level';
 import { getCachedNarrative } from '../analysis/narrative';
 import { clearStrategicCache } from '../core/strategic-session';
 import { clearSessionEvents } from '../memory/session-context';
@@ -206,6 +207,55 @@ router.get('/api/positions/open', (_req, res) => {
   }
 });
 
+// ─── Price Watch (restore on refresh) ────────────────────────────
+
+router.get('/api/pricewatch', async (_req, res) => {
+  try {
+    const pairs = getTradingPairs();
+    const positions = await fetchPositions();
+    const positionSymbols = new Set(positions.map(p => p.symbol));
+
+    const tickerResults = await Promise.allSettled(
+      pairs.map(sym => fetchTicker(sym))
+    );
+
+    const result: any[] = [];
+
+    for (let i = 0; i < pairs.length; i++) {
+      const symbol = pairs[i];
+      const ticker = tickerResults[i];
+      const price = ticker.status === 'fulfilled' ? (ticker.value.last ?? 0) : 0;
+
+      if (positionSymbols.has(symbol)) {
+        result.push({ symbol, state: 'position_held', price });
+      } else {
+        const levels = getActiveKeyLevels(symbol);
+        if (levels.length > 0) {
+          result.push({
+            symbol,
+            state: 'monitoring',
+            price,
+            keyLevels: levels.map(l => ({
+              id: l.id,
+              price: l.price,
+              type: l.type,
+              direction: l.direction,
+              triggerRadius: l.triggerRadius,
+              confidence: l.confidence,
+            })),
+          });
+        } else {
+          result.push({ symbol, state: 'waiting', price });
+        }
+      }
+    }
+
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── New: Plans & Narrative APIs ─────────────────────────────────
 
 router.get('/api/plans', (_req, res) => {
@@ -222,6 +272,14 @@ router.get('/api/plans/:symbol', (req, res) => {
     const active = getActivePlan(symbol);
     const pending = getPendingPlans(symbol);
     res.json({ active, pending });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/api/keylevels', (_req, res) => {
+  try {
+    res.json(getAllActiveKeyLevels());
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

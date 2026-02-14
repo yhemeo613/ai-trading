@@ -194,6 +194,24 @@ function initTables(db: Database.Database) {
       created_at TEXT DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS key_price_levels (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      symbol TEXT NOT NULL,
+      price REAL NOT NULL,
+      type TEXT NOT NULL,
+      trigger_radius REAL NOT NULL,
+      direction TEXT,
+      reasoning TEXT,
+      confidence REAL,
+      invalidation_price REAL,
+      status TEXT DEFAULT 'ACTIVE',
+      source_session_id TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      expires_at TEXT,
+      triggered_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_kpl_symbol_status ON key_price_levels(symbol, status);
+
     CREATE INDEX IF NOT EXISTS idx_plans_symbol_status ON trading_plans(symbol, status);
     CREATE INDEX IF NOT EXISTS idx_positions_symbol_status ON positions(symbol, status);
     CREATE INDEX IF NOT EXISTS idx_trades_created_at ON trades(created_at);

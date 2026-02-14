@@ -39,13 +39,6 @@ export const config = {
   },
 
   ai: {
-    openaiKey: process.env.OPENAI_API_KEY || '',
-    openaiBaseUrl: process.env.OPENAI_BASE_URL || '',
-    openaiModel: process.env.OPENAI_MODEL || 'gpt-4o',
-    anthropicKey: process.env.ANTHROPIC_API_KEY || '',
-    anthropicModel: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514',
-    geminiKey: process.env.GEMINI_API_KEY || '',
-    geminiModel: process.env.GEMINI_MODEL || 'gemini-2.0-flash',
     deepseekKey: process.env.DEEPSEEK_API_KEY || '',
     deepseekBaseUrl: process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com',
     deepseekModel: process.env.DEEPSEEK_MODEL || 'deepseek-chat',

@@ -27,7 +27,7 @@ export interface StrategicContext {
 // ─── Cache ───────────────────────────────────────────────────────
 
 const strategicCache: Map<string, StrategicContext> = new Map();
-const STRATEGIC_INTERVAL = 5 * 60 * 1000; // 5 minutes
+const STRATEGIC_INTERVAL = 3 * 60 * 1000; // 3 minutes
 
 export function getCachedStrategicContext(symbol: string): StrategicContext | undefined {
   return strategicCache.get(symbol);

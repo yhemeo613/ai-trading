@@ -22,6 +22,7 @@ import { detectMarketRegime } from '../memory/memory-context';
 import { buildNarrative, MarketNarrative, getCachedNarrative } from '../analysis/narrative';
 import { addSessionEvent } from '../memory/session-context';
 import { expireOldPlans, getActivePlan, getPendingPlans, createPlan, activatePlan, invalidatePlan, completePlan, evaluatePlanEntry, evaluatePlanValidity, TradingPlan } from './trading-plan';
+import { createKeyLevel, getActiveKeyLevels, evaluateLevelProximity, evaluateLevelValidity, triggerLevel, invalidateLevel, expireOldKeyLevels, formatLevelsForPrompt, KeyPriceLevel } from './key-price-level';
 import { runStrategicAnalysis, shouldRunStrategicAnalysis, getCachedStrategicContext, StrategicContext } from './strategic-session';
 import { runTacticalExecution } from './tactical-session';
 import { insertMarketObservation } from '../memory/memory-store';
@@ -43,15 +44,19 @@ let sltpMonitorRunning = false;
 let sltpLock = false; // Prevent concurrent SL/TP processing
 let loopAbortController: AbortController | null = null;
 
-const LOOP_INTERVAL = 60 * 1000;
+const LOOP_INTERVAL = 30 * 1000;
 const SLTP_MONITOR_INTERVAL = 5 * 1000;
 const SCAN_INTERVAL = 5 * 60 * 1000;
+const REEVAL_INTERVAL = 5 * 60 * 1000; // Force re-evaluation every 5 minutes even when monitoring
 const MAX_CONCURRENCY = 3;
 let lastScanTime = 0;
 let lastDecayDate = '';
 
 // Track previous market regime per symbol for change detection
 const previousRegimes: Map<string, string> = new Map();
+
+// Track last roundtable run time per symbol to force periodic re-evaluation
+const lastRoundtableTime: Map<string, number> = new Map();
 
 export function isRunning() { return running; }
 
@@ -61,6 +66,7 @@ export function getLoopAbortSignal(): AbortSignal | undefined {
 
 export function clearLoopState() {
   previousRegimes.clear();
+  lastRoundtableTime.clear();
   lastScanTime = 0;
   lastDecayDate = '';
   sltpLock = false;
@@ -227,11 +233,62 @@ async function tick() {
     logger.warn('计划过期清理失败', { error: err instanceof Error ? err.message : String(err) });
   }
 
+  // Expire old key levels
+  try { expireOldKeyLevels(); } catch (err) {
+    logger.warn('关键点位过期清理失败', { error: err instanceof Error ? err.message : String(err) });
+  }
+
   // Check SL/TP triggers before processing symbols
   const closedBySltp = await checkStopLossAndTakeProfit(positions, balance);
 
-  // Roundtable mode processes symbols sequentially (each session already has 6 parallel AI calls)
-  const batchSize = config.roundtable.enabled ? 1 : MAX_CONCURRENCY;
+  // Roundtable mode: separate symbols into "needs AI" vs "price monitoring only"
+  // Price-monitoring symbols run in parallel (zero AI), AI symbols run sequentially
+  if (config.roundtable.enabled) {
+    const filteredPairs = allPairs.filter((s) => !closedBySltp.has(s));
+
+    // First pass: run all price-monitoring-only symbols in parallel (instant, no AI)
+    const monitorResults = await Promise.allSettled(
+      filteredPairs.map((symbol) => processSymbolIfMonitorOnly(symbol, balance, positions, dynamicLimits))
+    );
+
+    // Collect symbols that need AI (returned true from monitor check)
+    const needsAI: string[] = [];
+    for (let j = 0; j < monitorResults.length; j++) {
+      if (monitorResults[j].status === 'fulfilled') {
+        const needsRoundtable = (monitorResults[j] as PromiseFulfilledResult<boolean>).value;
+        if (needsRoundtable) {
+          needsAI.push(filteredPairs[j]);
+        } else {
+          recordApiSuccess();
+        }
+      } else {
+        const err = (monitorResults[j] as PromiseRejectedResult).reason;
+        if (!running || (err instanceof Error && err.message === 'AI 请求已取消')) continue;
+        logger.error(`处理 ${filteredPairs[j]} 时出错`, { error: err instanceof Error ? err.message : String(err) });
+        recordApiFailure();
+      }
+    }
+
+    // Second pass: run AI-needing symbols in parallel
+    // Each roundtable already has 6 parallel AI calls internally, so limit concurrency
+    if (needsAI.length > 0 && running && !isCircuitTripped()) {
+      const aiResults = await Promise.allSettled(
+        needsAI.map((symbol) => processSymbol(symbol, balance, positions, dynamicLimits))
+      );
+      for (let j = 0; j < aiResults.length; j++) {
+        if (aiResults[j].status === 'fulfilled') {
+          recordApiSuccess();
+        } else {
+          const err = (aiResults[j] as PromiseRejectedResult).reason;
+          if (!running || (err instanceof Error && err.message === 'AI 请求已取消')) continue;
+          logger.error(`处理 ${needsAI[j]} 时出错`, { error: err instanceof Error ? err.message : String(err) });
+          recordApiFailure();
+        }
+      }
+    }
+  } else {
+    // Non-roundtable mode: parallel batches as before
+    const batchSize = MAX_CONCURRENCY;
 
   // Process pairs in parallel batches
   for (let i = 0; i < allPairs.length; i += batchSize) {
@@ -254,6 +311,7 @@ async function tick() {
         recordApiFailure();
       }
     }
+  }
   }
 }
 
@@ -393,6 +451,117 @@ async function checkStopLossAndTakeProfit(
   return closedSymbols;
 }
 
+async function processSymbolIfMonitorOnly(
+  symbol: string,
+  balance: ReturnType<typeof import('../exchange/account').fetchBalance> extends Promise<infer T> ? T : never,
+  positions: ReturnType<typeof import('../exchange/account').fetchPositions> extends Promise<infer T> ? T : never,
+  dynamicLimits: DynamicRiskLimits,
+): Promise<boolean> {
+  // Lightweight pre-check: fetch market data, check plans, decide if AI is needed.
+  // Returns true if this symbol needs a full roundtable, false if handled here.
+  if (!running) return false;
+
+  const snapshot = await fetchMarketSnapshot(symbol);
+  const currentPrice = snapshot.ticker.last ?? 0;
+
+  // Compute indicators for narrative/regime detection
+  const allIndicators: { [tf: string]: TechnicalIndicators } = {};
+  for (const tf of ['1m', '5m', '15m', '1h'] as const) {
+    allIndicators[tf] = calcIndicators(snapshot.klines[tf]);
+  }
+  const orderbookAnalysis = analyzeOrderbook(snapshot.orderbook.bids, snapshot.orderbook.asks);
+  const sentiment = calcSentiment(allIndicators, orderbookAnalysis, snapshot.fundingRate, snapshot.ticker.percentage);
+  const marketRegime = detectMarketRegime(allIndicators);
+  const narrative = buildNarrative(symbol, snapshot.klines, allIndicators, orderbookAnalysis, currentPrice);
+
+  // Detect shifts
+  if (narrative.narrativeShift) {
+    addSessionEvent({ type: 'narrative_shift', symbol, timestamp: Date.now(), description: narrative.narrativeShift, price: currentPrice, metadata: { regime: marketRegime } });
+  }
+  const prevRegime = previousRegimes.get(symbol);
+  const regimeChanged = prevRegime !== undefined && prevRegime !== marketRegime;
+  if (regimeChanged) {
+    addSessionEvent({ type: 'regime_change', symbol, timestamp: Date.now(), description: `市场环境从 ${prevRegime} 变为 ${marketRegime}`, price: currentPrice, metadata: { from: prevRegime, to: marketRegime } });
+  }
+  previousRegimes.set(symbol, marketRegime);
+
+  broadcast({ type: 'narrative', data: { symbol, narrative: narrative.formatted, regime: marketRegime, bias: narrative.htfBias } });
+
+  // Check plan validity
+  const activePlan = getActivePlan(symbol);
+  if (activePlan && activePlan.id) {
+    const validity = evaluatePlanValidity(activePlan, currentPrice);
+    if (!validity.valid) {
+      invalidatePlan(activePlan.id, validity.reason);
+      broadcast({ type: 'plan', data: { symbol, action: 'invalidated', reason: validity.reason } });
+    }
+  }
+  for (const pp of getPendingPlans(symbol)) {
+    if (pp.id) {
+      const validity = evaluatePlanValidity(pp, currentPrice);
+      if (!validity.valid) invalidatePlan(pp.id, validity.reason);
+    }
+  }
+
+  // Check key level validity
+  for (const kl of getActiveKeyLevels(symbol)) {
+    if (kl.id) {
+      const validity = evaluateLevelValidity(kl, currentPrice);
+      if (!validity.valid) invalidateLevel(kl.id, validity.reason);
+    }
+  }
+
+  // Price-watch gateway decision
+  const currentPosition = positions.find((p) => p.symbol === symbol);
+  const keyLevels = getActiveKeyLevels(symbol);
+  const activePlanNow = getActivePlan(symbol);
+  const hasPosition = !!currentPosition;
+  const hasKeyLevels = keyLevels.length > 0;
+  const hasActivePlan = !!activePlanNow;
+  const significantShift = !!narrative.narrativeShift || regimeChanged;
+
+  // State 1: Has position, no shift → pure monitoring
+  if (hasPosition && !significantShift) {
+    logger.info(`${symbol} 价格监控中 [持仓中，SL/TP监控覆盖]`);
+    broadcast({ type: 'pricewatch', data: { symbol, state: 'position_held', price: currentPrice } });
+    return false;
+  }
+
+  // State 3: Has key levels, price NOT near any level → pure monitoring (unless re-eval timer expired)
+  if (!hasPosition && hasKeyLevels) {
+    const triggered = keyLevels.find((l) => evaluateLevelProximity(l, currentPrice));
+    if (!triggered) {
+      const lastRun = lastRoundtableTime.get(symbol) ?? 0;
+      const timeSinceLastRun = Date.now() - lastRun;
+      if (timeSinceLastRun < REEVAL_INTERVAL) {
+        const levelsDesc = keyLevels.map((l) =>
+          `${l.type} ${l.price.toFixed(2)} ±${l.triggerRadius.toFixed(2)}`
+        ).join(', ');
+        logger.info(`${symbol} 价格监控中: ${currentPrice.toFixed(2)} | 关键点位: ${levelsDesc}`);
+        broadcast({
+          type: 'pricewatch',
+          data: {
+            symbol,
+            state: 'monitoring',
+            price: currentPrice,
+            keyLevels: keyLevels.map((l) => ({
+              id: l.id, price: l.price, type: l.type, direction: l.direction,
+              triggerRadius: l.triggerRadius, confidence: l.confidence,
+            })),
+          },
+        });
+        return false;
+      }
+      // Timer expired — needs AI re-evaluation
+      logger.info(`${symbol} 定时重评估: 超过 ${REEVAL_INTERVAL / 1000}s，需要重新运行圆桌`);
+      return true;
+    }
+  }
+
+  // All other states need AI → return true
+  return true;
+}
+
 async function processSymbol(
   symbol: string,
   balance: ReturnType<typeof import('../exchange/account').fetchBalance> extends Promise<infer T> ? T : never,
@@ -477,20 +646,29 @@ async function processSymbol(
   }
 
   // ─── Price-Watch Gateway (roundtable mode only) ─────────────────
-  // Skip expensive AI roundtable calls when price is not near any entry zone.
-  // Flow: no position & no plan → run init roundtable to generate plans
-  //       has pending plan & price outside zone → skip AI, just monitor
-  //       has pending plan & price in zone → run confirmation roundtable
+  // Skip expensive AI roundtable calls when price is not near any key level.
+  // Flow: no position & no key levels → run init roundtable to generate key levels
+  //       has key levels & price far from all → skip AI, just monitor
+  //       has key levels & price near one → run confirmation roundtable
   //       has position → skip (SL/TP monitor handles it), unless regime/narrative shift
-  //       all plans expired → regenerate
+  let triggeredKeyLevel: KeyPriceLevel | null = null;
+
   if (useRoundtable) {
     const currentPosition = positions.find((p) => p.symbol === symbol);
-    const pendingPlans = getPendingPlans(symbol);
+    const keyLevels = getActiveKeyLevels(symbol);
     const activePlanNow = getActivePlan(symbol);
     const hasPosition = !!currentPosition;
-    const hasPendingPlans = pendingPlans.length > 0;
+    const hasKeyLevels = keyLevels.length > 0;
     const hasActivePlan = !!activePlanNow;
     const significantShift = !!narrative.narrativeShift || regimeChanged;
+
+    // Check key level validity
+    for (const kl of keyLevels) {
+      if (kl.id) {
+        const validity = evaluateLevelValidity(kl, currentPrice);
+        if (!validity.valid) invalidateLevel(kl.id, validity.reason);
+      }
+    }
 
     // State 1: Has position → skip roundtable (SL/TP monitor covers it)
     //          Exception: significant narrative/regime shift triggers a review
@@ -502,58 +680,67 @@ async function processSymbol(
       }
       // significantShift → fall through to run roundtable for position review
       logger.info(`${symbol} 持仓中但检测到市场剧变，触发圆桌审查`);
+      broadcast({ type: 'pricewatch', data: { symbol, state: 'position_review', price: currentPrice } });
     }
 
-    // State 2: No position, no pending plans, no active plan → need initial roundtable
-    if (!hasPosition && !hasPendingPlans && !hasActivePlan) {
-      // Fall through to run roundtable — it will generate plans
-      // But rate-limit: if we already generated plans this session and they all expired,
-      // still fall through (the roundtable will produce new ones)
-      logger.info(`${symbol} 无计划无持仓，运行初始化圆桌产出交易计划`);
-      // Mark that we'll generate plans (reset after plans are created)
+    // State 2: No position, no key levels, no active plan → need initial roundtable
+    if (!hasPosition && !hasKeyLevels && !hasActivePlan) {
+      logger.info(`${symbol} 无关键点位无持仓，运行初始化圆桌产出关键点位`);
+      broadcast({ type: 'pricewatch', data: { symbol, state: 'generating', price: currentPrice } });
     }
 
-    // State 3: Has pending plans, price NOT in any entry zone → skip AI
-    if (!hasPosition && hasPendingPlans) {
-      const triggered = pendingPlans.find((p) => evaluatePlanEntry(p, currentPrice));
+    // State 3: Has key levels, price NOT near any level → skip AI (unless re-eval timer expired)
+    if (!hasPosition && hasKeyLevels) {
+      // Refresh after validity check
+      const activeLevels = getActiveKeyLevels(symbol);
+      const triggered = activeLevels.find((l) => evaluateLevelProximity(l, currentPrice));
       if (!triggered) {
-        // Price not near any entry zone — pure monitoring, zero AI
-        const zones = pendingPlans.map((p) =>
-          `${p.direction} [${p.entryZone.low.toFixed(2)}-${p.entryZone.high.toFixed(2)}]`
-        ).join(', ');
-        logger.info(`${symbol} 价格监控中: ${currentPrice.toFixed(2)} | 等待入场区间: ${zones}`);
+        // Check if we should force a periodic re-evaluation
+        const lastRun = lastRoundtableTime.get(symbol) ?? 0;
+        const timeSinceLastRun = Date.now() - lastRun;
+        if (timeSinceLastRun < REEVAL_INTERVAL) {
+          // Price not near any key level, timer not expired — pure monitoring, zero AI
+          const levelsDesc = activeLevels.map((l) =>
+            `${l.type} ${l.price.toFixed(2)} ±${l.triggerRadius.toFixed(2)}`
+          ).join(', ');
+          logger.info(`${symbol} 价格监控中: ${currentPrice.toFixed(2)} | 关键点位: ${levelsDesc} | 下次重评估: ${Math.round((REEVAL_INTERVAL - timeSinceLastRun) / 1000)}s`);
+          broadcast({
+            type: 'pricewatch',
+            data: {
+              symbol,
+              state: 'monitoring',
+              price: currentPrice,
+              keyLevels: activeLevels.map((l) => ({
+                id: l.id, price: l.price, type: l.type, direction: l.direction,
+                triggerRadius: l.triggerRadius, confidence: l.confidence,
+              })),
+            },
+          });
+          return;
+        }
+        // Timer expired — force re-evaluation roundtable
+        logger.info(`${symbol} 定时重评估: 价格 ${currentPrice.toFixed(2)} 未触发关键点位，但已超过 ${REEVAL_INTERVAL / 1000}s，重新运行圆桌`);
+        broadcast({ type: 'pricewatch', data: { symbol, state: 'reeval', price: currentPrice } });
+        // Fall through to run roundtable
+      } else {
+        // State 4: Price near a key level → run confirmation roundtable
+        triggeredKeyLevel = triggered;
+        if (triggered.id) triggerLevel(triggered.id);
+        logger.info(`${symbol} 价格 ${currentPrice.toFixed(2)} 接近 ${triggered.type} 关键点位 ${triggered.price.toFixed(2)}，触发确认圆桌`);
         broadcast({
           type: 'pricewatch',
           data: {
             symbol,
-            state: 'monitoring',
+            state: 'level_triggered',
             price: currentPrice,
-            plans: pendingPlans.map((p) => ({
-              id: p.id,
-              direction: p.direction,
-              entryZone: p.entryZone,
-              confidence: p.confidence,
-            })),
+            triggeredLevel: { id: triggered.id, price: triggered.price, type: triggered.type, direction: triggered.direction },
           },
         });
-        return;
+        // Fall through to run roundtable for confirmation
       }
-
-      // State 4: Price entered entry zone → run confirmation roundtable
-      logger.info(`${symbol} 价格 ${currentPrice.toFixed(2)} 进入 ${triggered.direction} 入场区间 [${triggered.entryZone.low.toFixed(2)}-${triggered.entryZone.high.toFixed(2)}]，触发确认圆桌`);
-      broadcast({
-        type: 'pricewatch',
-        data: {
-          symbol,
-          state: 'entry_triggered',
-          price: currentPrice,
-          triggeredPlan: { id: triggered.id, direction: triggered.direction, entryZone: triggered.entryZone },
-        },
-      });
-      // Fall through to run roundtable for confirmation
     }
 
-    // States that fall through: 2 (no plans), 4 (price in zone), 1+shift (position review)
+    // States that fall through: 2 (no levels), 4 (price near level), 1+shift (position review)
     // All proceed to the roundtable below
   }
 
@@ -645,6 +832,7 @@ async function processSymbol(
   let indicatorsJson: string;
   let orderbookJson: string;
   let sentimentJson: string;
+  let rtResult: import('../roundtable/types').RoundtableSessionResult | undefined;
 
   if (useRoundtable) {
     // ─── Roundtable Mode ──────────────────────────────────────
@@ -683,11 +871,19 @@ async function processSymbol(
             } catch { return []; }
           })(),
           positionThesis: getPositionThesis(symbol) ?? null,
+          triggeredKeyLevel: triggeredKeyLevel ? {
+            price: triggeredKeyLevel.price,
+            type: triggeredKeyLevel.type,
+            direction: triggeredKeyLevel.direction,
+            reasoning: triggeredKeyLevel.reasoning,
+            confidence: triggeredKeyLevel.confidence,
+          } : undefined,
         },
       };
 
-      const rtResult = await runRoundtableSession(roundtableInput, loopAbortController?.signal);
+      rtResult = await runRoundtableSession(roundtableInput, loopAbortController?.signal);
       if (!running) return;
+      lastRoundtableTime.set(symbol, Date.now());
 
       // Convert ChairmanDecision → AIDecision
       decision = chairmanToAIDecision(rtResult.chairmanDecision);
@@ -758,6 +954,10 @@ async function processSymbol(
     strategicProvider: strategicContext.aiProvider,
     strategicModel: strategicContext.aiModel,
     strategicThinking: strategicContext.thinking,
+    keyLevels: getActiveKeyLevels(symbol).map(l => ({
+      price: l.price, type: l.type, direction: l.direction,
+      triggerRadius: l.triggerRadius, confidence: l.confidence,
+    })),
   } });
 
   if (!riskCheck.passed) {
@@ -766,6 +966,11 @@ async function processSymbol(
   }
 
   if (decision.action === 'HOLD') {
+    // In roundtable mode: extract entry levels from role opinions to create PENDING plans
+    // so the price-watch gateway can monitor them on subsequent ticks
+    if (useRoundtable && rtResult) {
+      await extractKeyLevelsFromRoundtable(symbol, rtResult, currentPrice, marketRegime, narrative);
+    }
     return;
   }
 
@@ -1006,6 +1211,123 @@ async function processStrategicPlan(
     }
   }
   // MAINTAIN and NONE require no action
+}
+
+// ─── Extract Key Levels from Roundtable HOLD ────────────────────
+// When the roundtable decides HOLD, extract key price levels from chairman decision
+// for the price-watch gateway to monitor on subsequent ticks.
+
+async function extractKeyLevelsFromRoundtable(
+  symbol: string,
+  rtResult: import('../roundtable/types').RoundtableSessionResult,
+  currentPrice: number,
+  marketRegime: string,
+  narrative: MarketNarrative,
+) {
+  // Already have active key levels? Don't duplicate
+  const existing = getActiveKeyLevels(symbol);
+  if (existing.length > 0) return;
+
+  const expiresAt = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(); // 2 hours
+  let createdCount = 0;
+
+  // Priority 1: Use chairman's keyPriceLevels output
+  if (rtResult.chairmanDecision.keyPriceLevels && rtResult.chairmanDecision.keyPriceLevels.length > 0) {
+    for (const kpl of rtResult.chairmanDecision.keyPriceLevels) {
+      try {
+        createKeyLevel({
+          symbol,
+          price: kpl.price,
+          type: kpl.type,
+          triggerRadius: kpl.triggerRadius,
+          direction: kpl.direction,
+          reasoning: kpl.reasoning,
+          confidence: kpl.confidence,
+          invalidationPrice: kpl.invalidationPrice,
+          sourceSessionId: rtResult.sessionId,
+          expiresAt,
+        });
+        createdCount++;
+      } catch (err) {
+        logger.warn(`${symbol} 创建关键点位失败`, { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+    if (createdCount > 0) {
+      logger.info(`${symbol} 圆桌产出 ${createdCount} 个关键点位`);
+    }
+  }
+
+  // Priority 2: Fallback to narrative keyLevels if chairman didn't provide any
+  if (createdCount === 0 && narrative.keyLevels && narrative.keyLevels.length > 0) {
+    const supports = narrative.keyLevels
+      .filter((l) => l.type === 'support' && l.price < currentPrice)
+      .sort((a, b) => b.price - a.price);
+    const resistances = narrative.keyLevels
+      .filter((l) => l.type === 'resistance' && l.price > currentPrice)
+      .sort((a, b) => a.price - b.price);
+
+    for (const s of supports.slice(0, 3)) {
+      try {
+        createKeyLevel({
+          symbol,
+          price: s.price,
+          type: 'support',
+          triggerRadius: currentPrice * 0.001, // 0.1% default for day trading
+          direction: 'LONG',
+          reasoning: `技术面支撑位 (来源: ${s.source}, 强度: ${s.strength})`,
+          confidence: 0.3 + s.strength * 0.1,
+          sourceSessionId: rtResult.sessionId,
+          expiresAt,
+        });
+        createdCount++;
+      } catch (err) {
+        logger.warn(`${symbol} 创建支撑位点位失败`, { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    for (const r of resistances.slice(0, 3)) {
+      try {
+        createKeyLevel({
+          symbol,
+          price: r.price,
+          type: 'resistance',
+          triggerRadius: currentPrice * 0.003,
+          direction: 'SHORT',
+          reasoning: `技术面压力位 (来源: ${r.source}, 强度: ${r.strength})`,
+          confidence: 0.3 + r.strength * 0.1,
+          sourceSessionId: rtResult.sessionId,
+          expiresAt,
+        });
+        createdCount++;
+      } catch (err) {
+        logger.warn(`${symbol} 创建压力位点位失败`, { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    if (createdCount > 0) {
+      logger.info(`${symbol} 技术面产出 ${createdCount} 个关键点位`);
+    }
+  }
+
+  // Broadcast updated monitoring state with new key levels
+  const newLevels = getActiveKeyLevels(symbol);
+  if (newLevels.length > 0) {
+    broadcast({
+      type: 'pricewatch',
+      data: {
+        symbol,
+        state: 'monitoring',
+        price: currentPrice,
+        keyLevels: newLevels.map((l) => ({
+          id: l.id, price: l.price, type: l.type, direction: l.direction,
+          triggerRadius: l.triggerRadius, confidence: l.confidence,
+        })),
+      },
+    });
+    broadcast({ type: 'plan', data: { symbol, action: 'key_levels_created', count: newLevels.length } });
+  } else {
+    logger.info(`${symbol} 圆桌 HOLD 但未产出关键点位`);
+  }
 }
 
 // ─── Roundtable → AIDecision Adapter ─────────────────────────────

@@ -79,9 +79,15 @@ function showPanel(name, el) {
   document.getElementById('panel-positions').style.display = name === 'positions' ? '' : 'none';
   document.getElementById('panel-trades').style.display = name === 'trades' ? '' : 'none';
   document.getElementById('panel-pos-history').style.display = name === 'pos-history' ? '' : 'none';
+  document.getElementById('panel-pricewatch').style.display = name === 'pricewatch' ? '' : 'none';
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   el.classList.add('active');
   if (name === 'pos-history') refreshPositionHistory();
+  if (name === 'pricewatch') {
+    // Clear the update notification dot when user views the tab
+    const dot = document.getElementById('pw-tab-dot');
+    if (dot) dot.style.display = 'none';
+  }
 }
 
 // ===== WebSocket =====
@@ -93,6 +99,8 @@ function initWebSocket() {
   ws.onopen = () => {
     badge.innerHTML = '<span class="badge-dot"></span>WS: 已连接';
     badge.className = 'badge badge-running';
+    // Restore pricewatch state on reconnect
+    refreshPriceWatch();
   };
   ws.onclose = () => {
     badge.innerHTML = '<span class="badge-dot"></span>WS: 已断开';
@@ -126,8 +134,22 @@ const pricewatchState = {}; // keyed by symbol
 
 function updatePriceWatch(data) {
   if (!data || !data.symbol) return;
-  pricewatchState[data.symbol] = { ...data, updatedAt: new Date().toLocaleTimeString() };
+  const prev = pricewatchState[data.symbol];
+  const changed = !prev || prev.state !== data.state
+    || JSON.stringify(prev.keyLevels) !== JSON.stringify(data.keyLevels);
+  pricewatchState[data.symbol] = { ...data, updatedAt: new Date().toLocaleTimeString(), _flash: changed };
   renderPriceWatch();
+  if (changed) flashPwBadge();
+}
+
+let _pwBadgeTimer = null;
+function flashPwBadge() {
+  // Show notification dot on the tab if pricewatch panel is not active
+  const panel = document.getElementById('panel-pricewatch');
+  if (panel && panel.style.display === 'none') {
+    const dot = document.getElementById('pw-tab-dot');
+    if (dot) dot.style.display = '';
+  }
 }
 
 function renderPriceWatch() {
@@ -142,40 +164,67 @@ function renderPriceWatch() {
     const d = pricewatchState[sym];
     const shortSym = escapeHtml(sym.replace('/USDT:USDT', ''));
     const price = Number(d.price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const flash = d._flash ? ' pw-updated' : '';
 
     if (d.state === 'position_held') {
-      return `<div class="pw-card pw-held">` +
+      return `<div class="pw-card pw-held${flash}">` +
         `<div class="pw-header"><span class="pw-symbol">${shortSym}</span><span class="pw-price">$${price}</span><span class="pw-time">${escapeHtml(d.updatedAt)}</span></div>` +
         `<div class="pw-status pw-status-held"><span class="pw-dot pw-dot-held"></span>持仓中 · SL/TP 监控</div>` +
       `</div>`;
     }
 
-    if (d.state === 'entry_triggered') {
-      const tp = d.triggeredPlan;
-      const dir = tp.direction === 'LONG' ? '做多' : '做空';
-      const dirClass = tp.direction === 'LONG' ? 'pw-long' : 'pw-short';
-      return `<div class="pw-card pw-triggered">` +
+    if (d.state === 'position_review') {
+      return `<div class="pw-card pw-triggered${flash}">` +
+        `<div class="pw-header"><span class="pw-symbol">${shortSym}</span><span class="pw-price">$${price}</span><span class="pw-time">${escapeHtml(d.updatedAt)}</span></div>` +
+        `<div class="pw-status pw-status-triggered"><span class="pw-dot pw-dot-triggered"></span>市场剧变 · 圆桌审查中</div>` +
+      `</div>`;
+    }
+
+    if (d.state === 'generating') {
+      return `<div class="pw-card pw-generating${flash}">` +
+        `<div class="pw-header"><span class="pw-symbol">${shortSym}</span><span class="pw-price">$${price}</span><span class="pw-time">${escapeHtml(d.updatedAt)}</span></div>` +
+        `<div class="pw-status pw-status-generating"><span class="pw-dot pw-dot-generating"></span>初始化圆桌 · 生成计划中</div>` +
+      `</div>`;
+    }
+
+    if (d.state === 'level_triggered') {
+      const tl = d.triggeredLevel;
+      const TYPE_LABELS = { resistance:'压力', support:'支撑', reversal:'反转', breakout:'突破', breakdown:'跌破' };
+      const typeLabel = TYPE_LABELS[tl.type] || tl.type;
+      const dirClass = tl.direction === 'LONG' ? 'pw-long' : tl.direction === 'SHORT' ? 'pw-short' : '';
+      return `<div class="pw-card pw-triggered${flash}">` +
         `<div class="pw-header"><span class="pw-symbol">${shortSym}</span><span class="pw-price">$${price}</span><span class="pw-time">${escapeHtml(d.updatedAt)}</span></div>` +
         `<div class="pw-status pw-status-triggered"><span class="pw-dot pw-dot-triggered"></span>触发确认圆桌</div>` +
-        `<div class="pw-zone ${dirClass}"><span class="pw-dir">${dir}</span> ${Number(tp.entryZone.low).toFixed(2)} - ${Number(tp.entryZone.high).toFixed(2)}</div>` +
+        `<div class="pw-level ${dirClass}"><span class="pw-type">${typeLabel}</span> ${Number(tl.price).toFixed(2)}</div>` +
+      `</div>`;
+    }
+
+    if (d.state === 'waiting') {
+      return `<div class="pw-card${flash}">` +
+        `<div class="pw-header"><span class="pw-symbol">${shortSym}</span><span class="pw-price">$${price}</span><span class="pw-time">${escapeHtml(d.updatedAt)}</span></div>` +
+        `<div class="pw-status pw-status-waiting"><span class="pw-dot pw-dot-waiting"></span>等待AI分析</div>` +
       `</div>`;
     }
 
     // state === 'monitoring'
-    const plans = d.plans || [];
-    const zonesHtml = plans.map(p => {
-      const dir = p.direction === 'LONG' ? '多' : '空';
-      const dirClass = p.direction === 'LONG' ? 'pw-long' : 'pw-short';
-      const conf = (p.confidence * 100).toFixed(0);
-      return `<div class="pw-zone ${dirClass}"><span class="pw-dir">${dir}</span> ${Number(p.entryZone.low).toFixed(2)} - ${Number(p.entryZone.high).toFixed(2)} <span class="pw-conf">${conf}%</span></div>`;
+    const TYPE_LABELS = { resistance:'压力', support:'支撑', reversal:'反转', breakout:'突破', breakdown:'跌破' };
+    const levels = d.keyLevels || [];
+    const levelsHtml = levels.map(l => {
+      const typeLabel = TYPE_LABELS[l.type] || l.type;
+      const dirClass = l.direction === 'LONG' ? 'pw-long' : l.direction === 'SHORT' ? 'pw-short' : '';
+      const conf = (l.confidence * 100).toFixed(0);
+      return `<div class="pw-level ${dirClass}"><span class="pw-type">${typeLabel}</span> ${Number(l.price).toFixed(2)} <span class="pw-radius">±${Number(l.triggerRadius).toFixed(2)}</span> <span class="pw-conf">${conf}%</span></div>`;
     }).join('');
 
-    return `<div class="pw-card">` +
+    return `<div class="pw-card${flash}">` +
       `<div class="pw-header"><span class="pw-symbol">${shortSym}</span><span class="pw-price">$${price}</span><span class="pw-time">${escapeHtml(d.updatedAt)}</span></div>` +
       `<div class="pw-status pw-status-monitoring"><span class="pw-dot pw-dot-monitoring"></span>价格监控中</div>` +
-      (zonesHtml ? `<div class="pw-zones">${zonesHtml}</div>` : '') +
+      (levelsHtml ? `<div class="pw-zones">${levelsHtml}</div>` : '') +
     `</div>`;
   }).join('');
+
+  // Clear flash flags after render
+  for (const sym of symbols) { pricewatchState[sym]._flash = false; }
 }
 
 // ===== Realtime tickers via WebSocket =====
@@ -251,9 +300,9 @@ function renderPositions(positions) {
 // ===== AI Analysis History (virtual scroll) =====
 
 function addAnalysis(data) {
-  const { decision, riskCheck, aiProvider, aiModel, strategicProvider, strategicModel, tacticalThinking, strategicThinking } = data;
+  const { decision, riskCheck, aiProvider, aiModel, strategicProvider, strategicModel, tacticalThinking, strategicThinking, keyLevels } = data;
   const time = new Date().toLocaleTimeString();
-  const entry = { time, ...decision, riskPassed: riskCheck.passed, riskReason: riskCheck.reason, tacticalThinking: tacticalThinking || '', strategicThinking: strategicThinking || '' };
+  const entry = { time, ...decision, riskPassed: riskCheck.passed, riskReason: riskCheck.reason, tacticalThinking: tacticalThinking || '', strategicThinking: strategicThinking || '', keyLevels: keyLevels || [] };
   analysisHistory.unshift(entry);
   if (analysisHistory.length > MAX_HISTORY) analysisHistory.pop();
 
@@ -290,6 +339,18 @@ function renderAnalysisItem(entry) {
     paramsHtml = `<div class="ai-params"><span>仓位 ${escapeHtml(entry.params.positionSizePercent)}%</span><span>杠杆 ${escapeHtml(entry.params.leverage)}x</span><span>止损 ${escapeHtml(entry.params.stopLossPrice)}</span><span>止盈 ${escapeHtml(entry.params.takeProfitPrice)}</span></div>`;
   }
 
+  let keyLevelsHtml = '';
+  if (entry.keyLevels && entry.keyLevels.length) {
+    const TYPE_LABELS = { resistance:'压力', support:'支撑', reversal:'反转', breakout:'突破', breakdown:'跌破' };
+    const levels = entry.keyLevels.map(l => {
+      const typeLabel = TYPE_LABELS[l.type] || l.type;
+      const dirClass = l.direction === 'LONG' ? 'pw-long' : l.direction === 'SHORT' ? 'pw-short' : '';
+      const conf = (l.confidence * 100).toFixed(0);
+      return `<div class="pw-level ${dirClass}"><span class="pw-type">${typeLabel}</span> ${Number(l.price).toFixed(2)} <span class="pw-radius">±${Number(l.triggerRadius).toFixed(2)}</span> <span class="pw-conf">${conf}%</span></div>`;
+    }).join('');
+    keyLevelsHtml = `<div class="ai-entry-zones"><div class="ai-entry-zones-label">监控关键点位</div><div class="pw-zones">${levels}</div></div>`;
+  }
+
   let thinkingHtml = '';
   if (entry.strategicThinking || entry.tacticalThinking) {
     const sections = [];
@@ -314,6 +375,7 @@ function renderAnalysisItem(entry) {
     `</div>` +
     `<div class="ai-reasoning">${escapeHtml(entry.reasoning || '无分析内容')}</div>` +
     paramsHtml +
+    keyLevelsHtml +
     thinkingHtml;
 
   return div;
@@ -632,6 +694,21 @@ async function refreshAnalysisHistory() {
   } catch (e) { console.error('分析历史加载错误', e); }
 }
 
+async function refreshPriceWatch() {
+  try {
+    const items = await (await fetch('/api/pricewatch')).json();
+    if (!Array.isArray(items)) return;
+    for (const item of items) {
+      if (!item.symbol) continue;
+      pricewatchState[item.symbol] = {
+        ...item,
+        updatedAt: new Date().toLocaleTimeString(),
+      };
+    }
+    renderPriceWatch();
+  } catch (e) { /* ignore */ }
+}
+
 function refreshAll() {
   refreshStatus();
   refreshTrades();
@@ -639,6 +716,7 @@ function refreshAll() {
   refreshDailyPnl();
   refreshTickers();
   refreshMode();
+  refreshPriceWatch();
   // Only hydrate analysis history on first load (empty array)
   if (analysisHistory.length === 0) refreshAnalysisHistory();
 }

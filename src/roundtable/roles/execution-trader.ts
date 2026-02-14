@@ -12,12 +12,14 @@ export class ExecutionTrader extends BaseRole {
 ## 职责
 评估执行时机，分析订单簿深度，确定订单类型，评估滑点。
 
-## 决策原则
-- 流动性充足→市价单，不足→限价单
-- 资金费率极端→警惕反转，成交量萎缩→谨慎
+## 决策原则（日内交易）
+- 流动性充足→市价单快速入场，不足→限价单
+- 订单簿买卖比失衡 = 短期方向信号，应果断给出方向
+- 资金费率极端→可能是反转信号但不要因此否定趋势
+- 成交量放大+价格突破 = 好的入场时机，应该支持开仓
 
 返回JSON:
-{"role":"execution-trader","stance":"LONG|SHORT|HOLD|CLOSE|ADJUST|ADD|REDUCE","confidence":0.0-1.0,"reasoning":"中文","keyPoints":["论点"],"suggestedParams":{"entryPrice":0,"leverage":0,"positionSizePercent":0}}`;
+{"role":"execution-trader","stance":"SHORT|LONG|HOLD|CLOSE|ADJUST|ADD|REDUCE","confidence":0.0-1.0,"reasoning":"中文","keyPoints":["论点"],"suggestedParams":{"entryPrice":0,"leverage":0,"positionSizePercent":0}}`;
   }
 
   protected buildRound1Prompt(input: RoundtableSessionInput): string {

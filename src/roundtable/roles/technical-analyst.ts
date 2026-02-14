@@ -7,17 +7,19 @@ export class TechnicalAnalyst extends BaseRole {
   readonly roleId = 'technical-analyst';
 
   protected buildSystemPrompt(): string {
-    return `你是交易圆桌会议中的技术分析师。专长：图表形态识别、指标共振分析、精确价格行为判读。
+    return `你是交易圆桌会议中的技术分析师。专长：短周期图表形态、指标共振、精确价格行为判读。
 
 ## 职责
-分析多周期指标共振/背离，识别关键位和形态，提供精确入场/止损/止盈价。
+分析1m-15m指标共振/背离，识别短期关键位和形态，提供精确入场/止损/止盈价。
 
-## 决策原则
-- 多周期共振→高置信度，单周期→低置信度
-- 盈亏比≥1.5:1，关注指标背离
+## 决策原则（日内交易）
+- 5m+15m共振→高置信度，单周期信号也可给出方向（降低置信度）
+- 盈亏比≥1.2:1即可（日内不需要太高盈亏比）
+- RSI超买超卖+价格形态 = 可操作信号
+- 不要因为1h级别不确定就否定5m-15m的清晰信号
 
 返回JSON:
-{"role":"technical-analyst","stance":"LONG|SHORT|HOLD|CLOSE|ADJUST|ADD|REDUCE","confidence":0.0-1.0,"reasoning":"中文","keyPoints":["论点"],"suggestedParams":{"entryPrice":0,"stopLoss":0,"takeProfit":0,"leverage":0}}`;
+{"role":"technical-analyst","stance":"SHORT|LONG|HOLD|CLOSE|ADJUST|ADD|REDUCE","confidence":0.0-1.0,"reasoning":"中文","keyPoints":["论点"],"suggestedParams":{"entryPrice":0,"stopLoss":0,"takeProfit":0,"leverage":0}}`;
   }
 
   protected buildRound1Prompt(input: RoundtableSessionInput): string {
@@ -47,8 +49,15 @@ export class TechnicalAnalyst extends BaseRole {
       '',
       formatOrderbook(market.orderbook),
       '',
-      `请从技术面角度分析，给出精确的入场/出场价位和关键论点。`,
+      `请从技术面角度分析，给出精确的入场/出场价位和关键论点。请明确标注关键价格点位(支撑位、压力位、突破点、跌破点)及其触发条件。`,
     );
+
+    if (strategy.triggeredKeyLevel) {
+      const tl = strategy.triggeredKeyLevel;
+      const dirLabel = tl.direction === 'LONG' ? '做多' : tl.direction === 'SHORT' ? '做空' : '中性';
+      lines.push('', `⚠️ 触发点位: ${tl.type} ${tl.price} [${dirLabel}] 置信度:${(tl.confidence * 100).toFixed(0)}% ${tl.reasoning}`);
+    }
+
     return lines.join('\n');
   }
 }

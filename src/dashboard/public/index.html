@@ -149,7 +149,7 @@
         <div class="chart-container"><canvas id="equity-chart"></canvas></div>
       </div>
 
-      <!-- Tabs: Positions / Trades / Position History -->
+      <!-- Tabs: Positions / Trades / Position History / Price Watch -->
       <div class="tabs">
         <button class="tab active" onclick="showPanel('positions',this)">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
@@ -162,6 +162,11 @@
         <button class="tab" onclick="showPanel('pos-history',this)">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
           持仓历史
+        </button>
+        <button class="tab" onclick="showPanel('pricewatch',this)" id="tab-pricewatch">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          价格监控
+          <span class="pw-tab-dot" id="pw-tab-dot" style="display:none"></span>
         </button>
       </div>
       <div id="panel-positions" class="table-panel">
@@ -182,21 +187,15 @@
           <tbody id="pos-history-body"><tr><td colspan="8" class="empty-row">暂无历史记录</td></tr></tbody>
         </table>
       </div>
+      <div id="panel-pricewatch" class="table-panel" style="display:none">
+        <div class="pricewatch-grid" id="pricewatch-container">
+          <div class="pricewatch-empty">等待启动...</div>
+        </div>
+      </div>
     </div>
 
     <!-- ===== SIDEBAR ===== -->
     <div class="sidebar">
-      <!-- Price Watch Monitor -->
-      <div class="sidebar-section">
-        <div class="section-header">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-          <span>价格监控</span>
-        </div>
-        <div id="pricewatch-container">
-          <div class="pricewatch-empty">等待启动...</div>
-        </div>
-      </div>
-
       <!-- Circuit Breaker -->
       <div class="sidebar-section">
         <div class="section-header">

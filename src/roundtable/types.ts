@@ -54,6 +54,16 @@ export const ConsensusLevelSchema = z.enum([
 ]);
 export type ConsensusLevel = z.infer<typeof ConsensusLevelSchema>;
 
+export const KeyPriceLevelOutputSchema = z.object({
+  price: z.number(),
+  type: z.enum(['resistance', 'support', 'reversal', 'breakout', 'breakdown']),
+  triggerRadius: z.number(),
+  direction: z.enum(['LONG', 'SHORT']).nullable(),
+  reasoning: z.string(),
+  confidence: z.number().min(0).max(1),
+  invalidationPrice: z.number().optional(),
+});
+
 export const ChairmanDecisionSchema = z.object({
   action: StanceSchema,
   symbol: z.string(),
@@ -71,6 +81,7 @@ export const ChairmanDecisionSchema = z.object({
     orderType: z.enum(['MARKET', 'LIMIT']).nullable().optional(),
   }).nullable(),
   marketRegime: MarketRegimeSchema.optional(),
+  keyPriceLevels: z.array(KeyPriceLevelOutputSchema).optional(),
 });
 export type ChairmanDecision = z.infer<typeof ChairmanDecisionSchema>;
 
@@ -121,6 +132,13 @@ export interface RoundtableStrategyData {
   activePlan: any | null;
   positionOps: any[];
   positionThesis: string | null;
+  triggeredKeyLevel?: {
+    price: number;
+    type: string;
+    direction: string | null;
+    reasoning: string;
+    confidence: number;
+  };
 }
 
 export interface RoundtableSessionInput {

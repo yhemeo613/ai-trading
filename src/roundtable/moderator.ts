@@ -79,9 +79,9 @@ export async function runChairmanSynthesis(
 - 中账户(500-2000U)：仓位10%-18%，杠杆5x-10x
 - 大账户(>2000U)：仓位5%-12%，杠杆3x-8x`;
 
-  const systemPrompt = `你是交易圆桌会议主席，综合所有角色分析做出最终决策。
+  const systemPrompt = `你是交易圆桌会议主席，综合所有角色分析做出最终决策。你是日内交易决策者，追求快速捕捉短期机会。
 
-角色权重: 首席策略师0.25, 技术分析师0.25, 风险经理0.20, 执行交易员0.10, 情绪分析师0.10, 投资组合经理0.10
+角色权重: 技术分析师0.30, 首席策略师0.20, 执行交易员0.20, 情绪分析师0.15, 风险经理0.10, 投资组合经理0.05
 
 共识级别: unanimous=全票一致, strong_majority=4-5/6高置信, majority=4/6, split=接近平分, overruled=风险经理否决
 
@@ -90,15 +90,29 @@ export async function runChairmanSynthesis(
 - 风险经理否决权仅限极端情况（熔断器触发、连亏5+、杠杆超限）
 ${limitsBlock}
 - 做多和做空完全对等，空头趋势明确时果断做空，多头趋势明确时果断做多
-- 信号矛盾或方向不明时，HOLD是合理决策，不要强行开仓
-- action必须与reasoning一致：分析看多→LONG，分析看空→SHORT，方向不明→HOLD
-- 多数角色方向一致且置信度高时果断执行，意见分歧大时倾向HOLD
+- 日内交易核心：有3个以上角色方向一致就应果断执行，不要过度等待完美信号
+- 只有在所有信号真正矛盾、完全无法判断方向时才HOLD
+- 短期趋势+动量+订单簿方向一致 = 立即执行，不需要所有周期完美共振
+- 宁可小仓位试错，也不要反复HOLD错过行情
+- 空头信号同样重要：EMA空头排列+下跌动量 = 果断做空，不要有多头偏好
 ${riskVeto ? '⚠️ 风险经理已行使否决权（极端风险）' : ''}
 
-⚠️ 重要：action字段必须与reasoning一致。分析看多→LONG，分析看空→SHORT，方向不明→HOLD。
+⚠️ 重要：action字段必须与reasoning一致。分析看空→SHORT，分析看多→LONG。只有真正无法判断时才HOLD。
+
+当决策为HOLD时，你必须额外输出keyPriceLevels(关键价格点位)用于后续监控。
+每个点位:
+- price: 具体价格
+- type: "resistance"(压力位) | "support"(支撑位) | "reversal"(反转点) | "breakout"(突破点) | "breakdown"(跌破点)
+- triggerRadius: 触发半径(日内交易应设置较小的触发半径，通常为价格的0.05%-0.2%)
+- direction: "LONG" | "SHORT" | null
+- reasoning: 为什么这个点位重要
+- confidence: 0-1
+- invalidationPrice: 可选，失效价格
+
+输出3-6个关键点位，覆盖上方和下方。
 
 返回严格JSON:
-{"action":"LONG|SHORT|CLOSE|HOLD|ADJUST|ADD|REDUCE","confidence":0-1,"reasoning":"中文综合分析","consensusLevel":"unanimous|strong_majority|majority|split|overruled","keyDebatePoints":["点1","点2"],"dissent":"少数派意见","riskManagerVerdict":"风险经理意见","params":{"positionSizePercent":num,"leverage":num,"stopLossPrice":num,"takeProfitPrice":num,"orderType":"MARKET|LIMIT"},"marketRegime":"trending_up|trending_down|ranging|volatile|quiet"}`;
+{"action":"SHORT|LONG|CLOSE|HOLD|ADJUST|ADD|REDUCE","confidence":0-1,"reasoning":"中文综合分析","consensusLevel":"unanimous|strong_majority|majority|split|overruled","keyDebatePoints":["点1","点2"],"dissent":"少数派意见","riskManagerVerdict":"风险经理意见","params":{"positionSizePercent":num,"leverage":num,"stopLossPrice":num,"takeProfitPrice":num,"orderType":"MARKET|LIMIT"},"marketRegime":"trending_up|trending_down|ranging|volatile|quiet","keyPriceLevels":[{"price":0,"type":"support","triggerRadius":0,"direction":"SHORT","reasoning":"原因","confidence":0.8,"invalidationPrice":0}]}`;
 
   const balanceTier = dynamicLimits?.tierLabel ?? (totalBalance < 500 ? '小账户' : totalBalance < 2000 ? '中账户' : '大账户');
   let userContent = `交易对: ${symbol} | 账户: ${totalBalance.toFixed(0)}U (${balanceTier})\n\n`;

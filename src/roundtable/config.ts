@@ -34,7 +34,7 @@ function parseRoleProviders(): Record<string, string> {
   const providers: Record<string, string> = {};
   const raw = process.env.ROUNDTABLE_ROLE_PROVIDERS || '';
   if (!raw) return providers;
-  // Format: "chief-strategist:anthropic,technical-analyst:deepseek"
+  // Format: "chief-strategist:deepseek,technical-analyst:qwen"
   for (const pair of raw.split(',')) {
     const [role, provider] = pair.trim().split(':');
     if (role && provider) {

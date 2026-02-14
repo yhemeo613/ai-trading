@@ -3,6 +3,8 @@ import http from 'http';
 import { logger } from '../utils/logger';
 import { fetchTicker } from '../exchange/market-data';
 import { fetchBalance, fetchPositions } from '../exchange/account';
+import { getTradingPairs } from '../core/pair-selector';
+import { getActiveKeyLevels } from '../core/key-price-level';
 
 let wss: WebSocket.Server | null = null;
 let realtimeTimer: ReturnType<typeof setInterval> | null = null;
@@ -79,6 +81,41 @@ async function pushRealtimeData() {
         type: 'account',
         data: { balance, positions, unrealizedPnl },
       });
+
+      // Push pricewatch state (from DB, no extra API calls)
+      const pairs = getTradingPairs();
+      const positionSymbols = new Set(positions.map(p => p.symbol));
+      const tickerMap = new Map<string, number>();
+      for (const t of tickers) {
+        tickerMap.set(t.name, t.price);
+      }
+
+      for (const symbol of pairs) {
+        const shortName = symbol.replace('/USDT:USDT', '');
+        const price = tickerMap.get(shortName) ?? 0;
+
+        if (positionSymbols.has(symbol)) {
+          broadcast({ type: 'pricewatch', data: { symbol, state: 'position_held', price } });
+        } else {
+          const levels = getActiveKeyLevels(symbol);
+          if (levels.length > 0) {
+            broadcast({
+              type: 'pricewatch',
+              data: {
+                symbol,
+                state: 'monitoring',
+                price,
+                keyLevels: levels.map(l => ({
+                  id: l.id, price: l.price, type: l.type, direction: l.direction,
+                  triggerRadius: l.triggerRadius, confidence: l.confidence,
+                })),
+              },
+            });
+          } else {
+            broadcast({ type: 'pricewatch', data: { symbol, state: 'waiting', price } });
+          }
+        }
+      }
     }
   } catch (err) {
     // Silently ignore — don't break the timer

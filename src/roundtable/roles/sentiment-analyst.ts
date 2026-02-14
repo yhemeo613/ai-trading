@@ -15,11 +15,14 @@ export class SentimentAnalyst extends BaseRole {
 ## 拥挤预警
 资金费率>0.05%或<-0.05%、情绪极端(>80/<20)、成交量异常、多空比失衡
 
-## 决策原则
-极端情绪预示反转，情绪与价格背离是重要信号
+## 决策原则（日内交易）
+- 情绪偏向一侧+技术面确认 = 给出明确方向
+- 极端情绪预示反转，但不要仅凭情绪就否定趋势
+- 成交量放大+情绪升温 = 趋势延续信号，应支持方向
+- 不要因为"情绪中性"就默认HOLD，中性情绪下技术面信号更可靠
 
 返回JSON:
-{"role":"sentiment-analyst","stance":"LONG|SHORT|HOLD|CLOSE|ADJUST|ADD|REDUCE","confidence":0.0-1.0,"reasoning":"中文","keyPoints":["论点"]}`;
+{"role":"sentiment-analyst","stance":"SHORT|LONG|HOLD|CLOSE|ADJUST|ADD|REDUCE","confidence":0.0-1.0,"reasoning":"中文","keyPoints":["论点"]}`;
   }
 
   protected buildRound1Prompt(input: RoundtableSessionInput): string {
