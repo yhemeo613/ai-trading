@@ -63,11 +63,20 @@ export const config = {
   },
 
   risk: {
-    maxPositionPct: 10,
-    maxTotalExposurePct: 30,
-    maxLeverage: 10,
-    maxDailyLossPct: 5,
-    maxConcurrentPositions: 5,
+    maxPositionPct: 30,
+    maxTotalExposurePct: 60,
+    maxLeverage: 20,
+    maxDailyLossPct: 10,
+    maxConcurrentPositions: 3,
+  },
+
+  roundtable: {
+    enabled: (process.env.ROUNDTABLE_ENABLED || 'false').toLowerCase() === 'true',
+    depth: (process.env.ROUNDTABLE_DEPTH || 'standard') as 'quick' | 'standard' | 'deep',
+    allowDeep: (process.env.ROUNDTABLE_ALLOW_DEEP || 'false').toLowerCase() === 'true',
+    quorum: parseInt(process.env.ROUNDTABLE_QUORUM || '3', 10),
+    roleTimeoutMs: parseInt(process.env.ROUNDTABLE_ROLE_TIMEOUT_MS || '30000', 10),
+    chairmanTimeoutMs: parseInt(process.env.ROUNDTABLE_CHAIRMAN_TIMEOUT_MS || '30000', 10),
   },
 };
 

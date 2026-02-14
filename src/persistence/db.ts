@@ -179,11 +179,27 @@ function initTables(db: Database.Database) {
       activated_at TEXT,
       completed_at TEXT
     );
+    CREATE TABLE IF NOT EXISTS roundtable_discussions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT UNIQUE NOT NULL,
+      symbol TEXT NOT NULL,
+      depth TEXT NOT NULL,
+      round1_json TEXT NOT NULL,
+      round2_json TEXT,
+      chairman_decision_json TEXT NOT NULL,
+      consensus_level TEXT,
+      duration_ms INTEGER,
+      action_taken TEXT,
+      timings_json TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
     CREATE INDEX IF NOT EXISTS idx_plans_symbol_status ON trading_plans(symbol, status);
     CREATE INDEX IF NOT EXISTS idx_positions_symbol_status ON positions(symbol, status);
     CREATE INDEX IF NOT EXISTS idx_trades_created_at ON trades(created_at);
     CREATE INDEX IF NOT EXISTS idx_strategy_memory_symbol ON strategy_memory(symbol, memory_type);
     CREATE INDEX IF NOT EXISTS idx_position_ops_position_id ON position_operations(position_id);
+    CREATE INDEX IF NOT EXISTS idx_roundtable_symbol ON roundtable_discussions(symbol, created_at);
   `);
 }
 

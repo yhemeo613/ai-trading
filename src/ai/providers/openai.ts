@@ -21,7 +21,7 @@ export class OpenAIProvider implements AIProvider {
         model: config.ai.openaiModel,
         messages,
         temperature: 0.3,
-        max_tokens: 2000,
+        max_tokens: 1500,
       }),
       signal,
     });

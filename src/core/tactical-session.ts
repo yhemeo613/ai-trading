@@ -28,75 +28,30 @@ export interface TacticalSessionResult {
 // ─── Prompt Building ─────────────────────────────────────────────
 
 function buildTacticalSystemPrompt(): string {
-  return `你是一位果断的交易执行者。战略分析师已经给出了大方向和交易计划。
+  return `你是果断的交易执行者。战略方向已定，你负责执行。先思考再回答JSON。
 
-## 回复格式
-请先在 <think>...</think> 标签内写出你的完整思考过程（中文），包括：
-1. 账户与仓位评估（余额、已有持仓、盈亏状况）
-2. 战略上下文理解（大方向、计划、入场区间）
-3. 短周期技术面分析（1m/5m 指标、K线形态、订单簿）
-4. 最终决策理由
-
-然后在标签外返回严格JSON。
-
-## 你的任务
-1. 判断当前是否适合执行计划
-2. 如果持有仓位，评估入场论点是否仍然成立
-3. 精确设定入场价、止损、止盈
-4. 管理现有仓位（加仓/减仓/调整止损/平仓）
+## 任务
+判断是否执行计划，设定入场/止损/止盈，管理仓位（加仓/减仓/平仓）。
 
 ## 决策原则
-- 趋势明确时要果断入场，不要过度等待完美价格
-- 价格在入场区间内或接近入场区间（±1%）时，如果短周期有支撑信号就应该执行
-- 不需要所有指标都完美对齐，大方向对 + 短周期不矛盾即可执行
-- 论点失效时果断平仓
-- 盈亏比至少 1.5:1
-- 连续 HOLD 超过多轮后，如果大方向没变，应降低入场标准
-- LONG 和 SHORT 是完全对等的操作，战略方向看空时应果断做空
-
-## 入场判断（重要）
-- 价格在入场区间内：只要短周期没有明显反向信号，就应该执行
-- 价格接近入场区间（差距 <1%）：如果有任何短周期支撑信号就可以执行
-- 价格远离入场区间（差距 >2%）：HOLD，等待回调
-- 不要因为"等待更好的确认信号"而反复 HOLD，这会导致错过行情
-- 做空和做多的入场逻辑完全一样，不要对 SHORT 有额外的犹豫
+- 大方向对+短周期不矛盾即可执行，不需所有指标完美对齐
+- 价格在入场区间±1%内+短周期有支撑→执行；>2%→HOLD等回调
+- 论点失效→果断平仓；盈亏比≥1.5:1
+- LONG/SHORT完全对等，不要对做空额外犹豫
+- 连续HOLD多轮且大方向没变→降低入场标准
 
 ## 仓位管理
-- 盈利 > 2% 且趋势延续时考虑 ADD（加仓30-50%）
-- 亏损但出现微观反弹信号时考虑 REDUCE（减仓30-50%做T）
-- 动态追踪止损保护利润
+- 盈利>2%+趋势延续→ADD(30-50%)；亏损+微观反弹→REDUCE(30-50%做T)
+- 小账户(<500U)：仓位15%-25%，杠杆8x-15x，趋势明确时果断重仓
+- 中账户(500-2000U)：仓位10%-18%，杠杆5x-10x
+- 大账户(>2000U)：仓位5%-12%，杠杆3x-8x，逐步保守
 
-## 杠杆与仓位指导
-- 杠杆范围: 2x-10x，根据市场环境和置信度调整
-- 趋势明确 + 高置信度: 5x-10x
-- 趋势不明确 / 震荡: 2x-5x
-- 高波动环境: 2x-3x
-- 仓位大小: 5%-15% 可用余额
-- 不要使用 1x 杠杆，合约交易至少 2x 起步
+## 优先级
+有仓位: CLOSE>REDUCE>ADD>ADJUST>HOLD
+无仓位看多: LONG>HOLD | 看空: SHORT>HOLD
 
-## 决策优先级
-有仓位: CLOSE > REDUCE > ADD > ADJUST > HOLD
-无仓位（战略看多）: LONG > HOLD
-无仓位（战略看空）: SHORT > HOLD
-趋势明确时优先执行，不要因为是做空就额外犹豫
-
-返回严格JSON格式:
-{
-  "action": "LONG|SHORT|CLOSE|HOLD|ADJUST|ADD|REDUCE",
-  "symbol": "BTC/USDT:USDT",
-  "confidence": 0.0-1.0,
-  "reasoning": "中文简要说明",
-  "marketRegime": "trending_up|trending_down|ranging|volatile|quiet",
-  "params": {
-    "positionSizePercent": number,
-    "leverage": number,
-    "stopLossPrice": number,
-    "takeProfitPrice": number,
-    "orderType": "MARKET|LIMIT",
-    "addPercent": number,
-    "reducePercent": number
-  }
-}`;
+返回JSON:
+{"action":"LONG|SHORT|CLOSE|HOLD|ADJUST|ADD|REDUCE","symbol":"BTC/USDT:USDT","confidence":0.0-1.0,"reasoning":"中文","marketRegime":"trending_up|trending_down|ranging|volatile|quiet","params":{"positionSizePercent":0,"leverage":0,"stopLossPrice":0,"takeProfitPrice":0,"orderType":"MARKET|LIMIT","addPercent":0,"reducePercent":0}}`;
 }
 
 function buildTacticalUserPrompt(
@@ -175,10 +130,6 @@ function buildTacticalUserPrompt(
   if (indicators['1m']) indicatorTexts.push(formatIndicators('1m', indicators['1m']));
   if (indicators['5m']) indicatorTexts.push(formatIndicators('5m', indicators['5m']));
 
-  // Recent klines (only 20 candles for tactical)
-  const klines1m = formatRecentKlines(snapshot.klines['1m'], '1分钟K线', 20);
-  const klines5m = formatRecentKlines(snapshot.klines['5m'], '5分钟K线', 20);
-
   return `当前时间: ${now}
 交易对: ${snapshot.symbol}
 
@@ -209,25 +160,7 @@ ${formatOrderbook(orderbook)}
 
 ${formatSentiment(sentiment)}
 
-${klines1m}
-
-${klines5m}
-
-请基于战略上下文和当前短周期数据，做出果断的执行决策。
-如果价格在入场区间内或接近（±1%），且短周期没有明显反向信号，应该执行开仓。
-不要因为追求完美入场点而反复 HOLD。趋势明确时，果断 > 完美。
-如果持有仓位，优先评估仓位管理。`;
-}
-
-function formatRecentKlines(klines: any[][], label: string, count: number): string {
-  if (!klines || !klines.length) return `${label}: 无数据`;
-  const recent = klines.slice(-count);
-  const lines = recent.map((k) => {
-    const [ts, open, high, low, close, vol] = k;
-    const date = new Date(ts).toISOString().slice(11, 19);
-    return `  ${date} O:${open} H:${high} L:${low} C:${close} V:${vol}`;
-  });
-  return `${label} (最近 ${recent.length} 根):\n${lines.join('\n')}`;
+请基于战略上下文和当前短周期数据，做出果断的执行决策。价格在入场区间±1%内且短周期无反向信号就应执行。趋势明确时，果断 > 完美。持有仓位时优先评估仓位管理。`;
 }
 
 // ─── Main Entry ──────────────────────────────────────────────────

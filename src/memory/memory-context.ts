@@ -48,22 +48,18 @@ export function detectMarketRegime(indicators: { [tf: string]: TechnicalIndicato
  * Build memory context string for AI prompt injection.
  */
 export function buildMemoryContext(symbol: string, marketCondition?: string): string {
-  const lines: string[] = ['═══════════════════════════════════════', '【策略记忆与历史经验】'];
+  const lines: string[] = ['【策略记忆与历史经验】'];
 
   // 1. Symbol-specific stats
   const stats = getSymbolStats(symbol);
   if (stats) {
-    lines.push(`\n[${symbol} 历史表现]`);
-    lines.push(`  总交易: ${stats.totalTrades}, 胜率: ${(stats.winRate * 100).toFixed(1)}%, 盈亏比: ${stats.profitFactor.toFixed(2)}`);
-    lines.push(`  累计盈亏: ${stats.totalPnl.toFixed(2)} USDT`);
-    lines.push(`  平均盈利: ${stats.avgWinPnl.toFixed(2)}, 平均亏损: ${stats.avgLossPnl.toFixed(2)}`);
-    lines.push(`  最佳: ${stats.bestTradePnl.toFixed(2)}, 最差: ${stats.worstTradePnl.toFixed(2)}`);
+    lines.push(`[${symbol} 历史] 共${stats.totalTrades}笔, 胜率${(stats.winRate * 100).toFixed(1)}%, 盈亏比${stats.profitFactor.toFixed(2)}, 累计${stats.totalPnl.toFixed(2)}U, 均盈${stats.avgWinPnl.toFixed(2)}/均亏${stats.avgLossPnl.toFixed(2)}`);
   }
 
-  // 2. Relevant memories (lessons learned)
-  const memories = getRelevantMemories(symbol, marketCondition, 8);
+  // 2. Relevant memories (lessons learned, includes failures)
+  const memories = getRelevantMemories(symbol, marketCondition, 5);
   if (memories.length > 0) {
-    lines.push('\n[相关经验教训]');
+    lines.push('[相关经验]');
     for (const m of memories) {
       const outcomeStr = m.outcome ? ` [${m.outcome}]` : '';
       const pnlStr = m.pnl_percent != null ? ` (${m.pnl_percent > 0 ? '+' : ''}${m.pnl_percent.toFixed(2)}%)` : '';
@@ -71,38 +67,28 @@ export function buildMemoryContext(symbol: string, marketCondition?: string): st
     }
   }
 
-  // 3. Recent failure lessons (high priority)
-  const failures = getRelevantMemories(symbol, undefined, 5)
-    .filter((m: any) => m.outcome === 'loss' && m.relevance_score > 0.5);
-  if (failures.length > 0) {
-    lines.push('\n[近期失败教训 - 重点关注]');
-    for (const f of failures) {
-      lines.push(`  ⚠ ${f.content} (亏损 ${f.pnl_percent?.toFixed(2) ?? '?'}%)`);
-    }
-  }
-
-  // 4. All symbol win rates ranking
+  // 3. All symbol win rates ranking (top 5)
   const allStats = getAllSymbolStats();
   if (allStats.length > 0) {
-    lines.push('\n[各币种胜率排名]');
-    for (const s of allStats.slice(0, 8)) {
+    lines.push('[胜率排名]');
+    for (const s of allStats.slice(0, 5)) {
       const bar = s.winRate >= 0.5 ? '✓' : '✗';
-      lines.push(`  ${bar} ${s.symbol}: 胜率 ${(s.winRate * 100).toFixed(0)}%, 盈亏比 ${s.profitFactor.toFixed(2)}, 共 ${s.totalTrades} 笔`);
+      lines.push(`  ${bar} ${s.symbol}: ${(s.winRate * 100).toFixed(0)}%, 盈亏比${s.profitFactor.toFixed(2)}, ${s.totalTrades}笔`);
     }
   }
 
-  // 5. Recent market observations (level tests, regime changes, patterns)
+  // 4. Recent market observations
   try {
     const db = getDb();
     const observations = db.prepare(`
-      SELECT content, market_condition, created_at FROM strategy_memory
+      SELECT content, created_at FROM strategy_memory
       WHERE (symbol = ? OR symbol = '*')
         AND (memory_type LIKE 'observation_%' OR memory_type LIKE 'session_%')
         AND created_at > datetime('now', '-4 hours')
-      ORDER BY created_at DESC LIMIT 5
+      ORDER BY created_at DESC LIMIT 3
     `).all(symbol) as any[];
     if (observations.length > 0) {
-      lines.push('\n[近期市场观察]');
+      lines.push('[近期观察]');
       for (const obs of observations) {
         const time = obs.created_at?.slice(11, 16) ?? '';
         lines.push(`  [${time}] ${obs.content}`);
@@ -110,6 +96,5 @@ export function buildMemoryContext(symbol: string, marketCondition?: string): st
     }
   } catch { /* ignore */ }
 
-  lines.push('═══════════════════════════════════════');
   return lines.join('\n');
 }

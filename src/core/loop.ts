@@ -26,6 +26,17 @@ import { runTacticalExecution } from './tactical-session';
 import { insertMarketObservation } from '../memory/memory-store';
 import type { TechnicalIndicators, OrderbookAnalysis, MarketSentiment } from '../analysis/indicators';
 
+// Roundtable imports
+import { config } from '../config';
+import { runRoundtableSession } from '../roundtable/session';
+import { buildMemoryContext } from '../memory/memory-context';
+import { getCircuitState as getCircuitFullState, getStreakInfo } from '../risk/circuit-breaker';
+import { getPositionThesis } from '../persistence/models/position';
+import { getPositionOperations } from '../persistence/models/position-ops';
+import type { AIDecision } from './decision';
+import type { ChairmanDecision } from '../roundtable/types';
+import type { RoundtableSessionInput } from '../roundtable/types';
+
 let running = false;
 let sltpMonitorRunning = false;
 let sltpLock = false; // Prevent concurrent SL/TP processing
@@ -59,7 +70,7 @@ export async function startLoop() {
   if (running) return;
   running = true;
   loopAbortController = new AbortController();
-  logger.info('交易循环已启动 (双层AI模式)');
+  logger.info(`交易循环已启动 (${config.roundtable.enabled ? '圆桌会议模式' : '双层AI模式'})`);
 
   // Start independent SL/TP monitor
   startSltpMonitor();
@@ -216,11 +227,14 @@ async function tick() {
   // Check SL/TP triggers before processing symbols
   const closedBySltp = await checkStopLossAndTakeProfit(positions, balance);
 
+  // Roundtable mode processes symbols sequentially (each session already has 6 parallel AI calls)
+  const batchSize = config.roundtable.enabled ? 1 : MAX_CONCURRENCY;
+
   // Process pairs in parallel batches
-  for (let i = 0; i < allPairs.length; i += MAX_CONCURRENCY) {
+  for (let i = 0; i < allPairs.length; i += batchSize) {
     if (!running || isCircuitTripped()) break;
 
-    const batch = allPairs.slice(i, i + MAX_CONCURRENCY);
+    const batch = allPairs.slice(i, i + batchSize);
     const filteredBatch = batch.filter((symbol) => !closedBySltp.has(symbol));
     const results = await Promise.allSettled(
       filteredBatch.map((symbol) => processSymbol(symbol, balance, positions))
@@ -382,6 +396,7 @@ async function processSymbol(
   positions: ReturnType<typeof import('../exchange/account').fetchPositions> extends Promise<infer T> ? T : never
 ) {
   logger.info(`正在处理 ${symbol}`);
+  const useRoundtable = config.roundtable.enabled;
 
   // Abort early if loop was stopped
   if (!running) return;
@@ -458,7 +473,28 @@ async function processSymbol(
   }
 
   // 6. Strategic analysis (every 5 min or on significant change)
+  //    In roundtable mode, skip separate strategic AI call — the Chief Strategist role handles it.
   let strategicContext: StrategicContext;
+
+  if (useRoundtable) {
+    // Use cached context or lightweight fallback; roundtable's Chief Strategist provides the real analysis
+    const cached = getCachedStrategicContext(symbol);
+    if (cached) {
+      strategicContext = { ...cached, narrative };
+    } else {
+      strategicContext = {
+        symbol,
+        marketRegime,
+        bias: 'neutral',
+        reasoning: '圆桌模式：首席策略师将在会议中提供战略分析',
+        thinking: '',
+        narrative,
+        fetchedAt: Date.now(),
+        aiProvider: 'roundtable',
+        aiModel: 'deferred',
+      };
+    }
+  } else {
   const needsStrategic = shouldRunStrategicAnalysis(symbol, narrative.narrativeShift, regimeChanged);
 
   if (needsStrategic) {
@@ -514,9 +550,10 @@ async function processSymbol(
       };
     }
   }
+  } // end non-roundtable strategic analysis
 
-  // 7. Tactical execution (every tick)
-  let decision;
+  // 7. Tactical execution / Roundtable (every tick)
+  let decision: AIDecision;
   let aiProvider: string;
   let aiModel: string;
   let tacticalThinking: string;
@@ -524,24 +561,82 @@ async function processSymbol(
   let orderbookJson: string;
   let sentimentJson: string;
 
-  try {
-    const tacticalResult = await runTacticalExecution(
-      snapshot, balance, positions, strategicContext,
-      allIndicators, orderbookAnalysis, sentiment,
-      loopAbortController?.signal,
-    );
-    if (!running) return; // Loop stopped during AI call, abort immediately
-    decision = tacticalResult.decision;
-    aiProvider = tacticalResult.aiProvider;
-    aiModel = tacticalResult.aiModel;
-    tacticalThinking = tacticalResult.thinking;
-    indicatorsJson = tacticalResult.indicatorsJson;
-    orderbookJson = tacticalResult.orderbookJson;
-    sentimentJson = tacticalResult.sentimentJson;
-  } catch (err) {
-    if (!running) return; // Aborted, exit cleanly
-    logger.error(`${symbol} 战术执行失败`, { error: err instanceof Error ? err.message : String(err) });
-    throw err;
+  if (useRoundtable) {
+    // ─── Roundtable Mode ──────────────────────────────────────
+    try {
+      const roundtableInput: RoundtableSessionInput = {
+        market: {
+          symbol,
+          currentPrice,
+          indicators: allIndicators,
+          orderbook: orderbookAnalysis,
+          sentiment,
+          narrative,
+          fundingRate: snapshot.fundingRate,
+          ticker: {
+            last: snapshot.ticker.last,
+            percentage: snapshot.ticker.percentage,
+            volume: snapshot.ticker.volume,
+            quoteVolume: snapshot.ticker.quoteVolume,
+          },
+        },
+        account: {
+          balance,
+          positions,
+          circuitBreakerState: getCircuitFullState(),
+          streakInfo: getStreakInfo(),
+        },
+        strategy: {
+          strategicContext,
+          memoryContext: buildMemoryContext(symbol, marketRegime),
+          activePlan: getActivePlan(symbol),
+          positionOps: (() => {
+            try {
+              const dbPos = getOpenPositionBySymbol(symbol);
+              return dbPos ? getPositionOperations(dbPos.id) : [];
+            } catch { return []; }
+          })(),
+          positionThesis: getPositionThesis(symbol) ?? null,
+        },
+      };
+
+      const rtResult = await runRoundtableSession(roundtableInput, loopAbortController?.signal);
+      if (!running) return;
+
+      // Convert ChairmanDecision → AIDecision
+      decision = chairmanToAIDecision(rtResult.chairmanDecision);
+      aiProvider = `roundtable(${rtResult.depth})`;
+      aiModel = `consensus:${rtResult.consensusLevel}`;
+      tacticalThinking = rtResult.chairmanDecision.reasoning;
+      indicatorsJson = JSON.stringify(allIndicators);
+      orderbookJson = JSON.stringify(orderbookAnalysis);
+      sentimentJson = JSON.stringify(sentiment);
+    } catch (err) {
+      if (!running) return;
+      logger.error(`${symbol} 圆桌会议失败`, { error: err instanceof Error ? err.message : String(err) });
+      throw err;
+    }
+  } else {
+    // ─── Legacy Tactical Mode ─────────────────────────────────
+    try {
+      const tacticalResult = await runTacticalExecution(
+        snapshot, balance, positions, strategicContext,
+        allIndicators, orderbookAnalysis, sentiment,
+        loopAbortController?.signal,
+      );
+      if (!running) return;
+      decision = tacticalResult.decision;
+      aiProvider = tacticalResult.aiProvider;
+      aiModel = tacticalResult.aiModel;
+      tacticalThinking = tacticalResult.thinking;
+      indicatorsJson = tacticalResult.indicatorsJson;
+      orderbookJson = tacticalResult.orderbookJson;
+      sentimentJson = tacticalResult.sentimentJson;
+    } catch (err) {
+      if (!running) return;
+      logger.error(`${symbol} 战术执行失败`, { error: err instanceof Error ? err.message : String(err) });
+      throw err;
+    }
   }
 
   logger.info(`${symbol} AI 决策: ${decision.action} (置信度: ${decision.confidence}, 市场环境: ${marketRegime})`, {
@@ -821,6 +916,25 @@ async function processStrategicPlan(
     }
   }
   // MAINTAIN and NONE require no action
+}
+
+// ─── Roundtable → AIDecision Adapter ─────────────────────────────
+
+function chairmanToAIDecision(cd: ChairmanDecision): AIDecision {
+  return {
+    action: cd.action,
+    symbol: cd.symbol,
+    confidence: cd.confidence,
+    reasoning: cd.reasoning,
+    params: cd.params ? {
+      positionSizePercent: cd.params.positionSizePercent ?? undefined,
+      leverage: cd.params.leverage ?? undefined,
+      stopLossPrice: cd.params.stopLossPrice ?? undefined,
+      takeProfitPrice: cd.params.takeProfitPrice ?? undefined,
+      orderType: cd.params.orderType ?? undefined,
+    } : null,
+    marketRegime: cd.marketRegime,
+  };
 }
 
 function sleep(ms: number) {

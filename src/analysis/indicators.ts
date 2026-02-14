@@ -434,39 +434,42 @@ export function calcSentiment(
 // ─── Format for AI Prompt ────────────────────────────────────────
 
 export function formatIndicators(tf: string, ind: TechnicalIndicators): string {
-  const lines: string[] = [`【${tf} 技术指标】`];
+  const parts: string[] = [];
 
   // 趋势
-  lines.push(`  趋势: EMA排列=${ind.emaTrend}, EMA7=${n(ind.ema7)} EMA21=${n(ind.ema21)} EMA50=${n(ind.ema50)} SMA20=${n(ind.sma20)}`);
-  lines.push(`  PSAR=${n(ind.psar)} (${ind.psarTrend})`);
+  parts.push(`趋势:${ind.emaTrend}`);
+
+  // PSAR方向
+  parts.push(`PSAR:${ind.psarTrend}`);
 
   // 动量
-  lines.push(`  RSI(14)=${n(ind.rsi14)} [${ind.rsiSignal}]`);
+  parts.push(`RSI=${n(ind.rsi14)}[${ind.rsiSignal}]`);
   if (ind.macd) {
-    lines.push(`  MACD=${n(ind.macd.macd)} Signal=${n(ind.macd.signal)} Hist=${n(ind.macd.histogram)} [${ind.macdSignal}]`);
+    parts.push(`MACD=${ind.macdSignal}(H:${n(ind.macd.histogram)})`);
   }
-  lines.push(`  Stoch K=${n(ind.stochK)} D=${n(ind.stochD)} [${ind.stochSignal}]`);
-  lines.push(`  WilliamsR=${n(ind.williamsR)}, CCI=${n(ind.cci)}`);
+  parts.push(`Stoch:K=${n(ind.stochK)},D=${n(ind.stochD)}[${ind.stochSignal}]`);
 
   // 波动率
   if (ind.bollingerBands) {
-    const bb = ind.bollingerBands;
-    lines.push(`  布林带: 上=${n(bb.upper)} 中=${n(bb.middle)} 下=${n(bb.lower)} 宽度=${(bb.width * 100).toFixed(2)}% %B=${bb.percentB.toFixed(2)}`);
+    parts.push(`BB:%B=${ind.bollingerBands.percentB.toFixed(2)},宽=${(ind.bollingerBands.width * 100).toFixed(1)}%`);
   }
-  lines.push(`  ATR(14)=${n(ind.atr14)} (${n(ind.atrPercent)}%)`);
+  parts.push(`ATR=${n(ind.atrPercent)}%`);
 
   // 趋势强度
-  lines.push(`  ADX=${n(ind.adx)} +DI=${n(ind.plusDI)} -DI=${n(ind.minusDI)} [${ind.adxSignal}]`);
+  const diStr = ind.plusDI !== null && ind.minusDI !== null
+    ? (ind.plusDI > ind.minusDI ? '+DI>-DI' : '-DI>+DI')
+    : '';
+  parts.push(`ADX=${n(ind.adx)}(${ind.adxSignal})${diStr ? '[' + diStr + ']' : ''}`);
 
   // 成交量
-  lines.push(`  OBV趋势=${ind.obvTrend}, MFI=${n(ind.mfi)}, 量比=${n(ind.volumeRatio)}, VWAP=${n(ind.vwap)}`);
+  parts.push(`OBV=${ind.obvTrend},MFI=${n(ind.mfi)},量比=${n(ind.volumeRatio)}`);
 
-  // 一目均衡表
+  // 一目均衡表（仅信号方向）
   if (ind.ichimoku) {
-    lines.push(`  一目均衡: 转换=${n(ind.ichimoku.tenkan)} 基准=${n(ind.ichimoku.kijun)} 先行A=${n(ind.ichimoku.senkouA)} 先行B=${n(ind.ichimoku.senkouB)} [${ind.ichimoku.signal}]`);
+    parts.push(`一目:${ind.ichimoku.signal}`);
   }
 
-  return lines.join('\n');
+  return `【${tf}】${parts.join(' | ')}`;
 }
 
 export function formatOrderbook(ob: OrderbookAnalysis): string {

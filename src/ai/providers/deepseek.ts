@@ -20,7 +20,7 @@ export class DeepSeekProvider implements AIProvider {
         model: config.ai.deepseekModel,
         messages,
         temperature: 0.3,
-        max_tokens: 4000,
+        max_tokens: 1500,
       }),
       signal,
     });

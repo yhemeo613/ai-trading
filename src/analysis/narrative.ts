@@ -441,37 +441,32 @@ function formatNarrative(
   priceAction: { action: string; description: string },
   narrativeShift?: string,
 ): string {
-  const lines: string[] = ['═══════════════════════════════════════', `【${symbol} 市场叙事】`];
+  const lines: string[] = [`【${symbol} 市场叙事】`];
 
-  lines.push(`\n[大周期(1h)] ${htfBias}`);
-  lines.push(`[中周期(15m)] ${mtfContext}`);
-  lines.push(`[小周期(5m/1m)] ${ltfTrigger}`);
+  lines.push(`[1h] ${htfBias}`);
+  lines.push(`[15m] ${mtfContext}`);
+  lines.push(`[5m/1m] ${ltfTrigger}`);
 
   if (narrativeShift) {
-    lines.push(`\n⚡ 叙事变化: ${narrativeShift}`);
+    lines.push(`叙事变化: ${narrativeShift}`);
   }
 
-  // Key levels
+  // Key levels - compact format
   const supports = keyLevels.filter((l) => l.type === 'support').slice(0, 3);
   const resistances = keyLevels.filter((l) => l.type === 'resistance').slice(0, 3);
-  lines.push('\n[关键价位]');
   if (resistances.length > 0) {
-    lines.push(`  阻力: ${resistances.map((l) => `${l.price.toFixed(2)}(${l.source},强度${l.strength})`).join(', ')}`);
+    lines.push(`阻力: ${resistances.map((l) => `${l.price.toFixed(2)}(${l.source},${l.strength})`).join(', ')}`);
   }
   if (supports.length > 0) {
-    lines.push(`  支撑: ${supports.map((l) => `${l.price.toFixed(2)}(${l.source},强度${l.strength})`).join(', ')}`);
+    lines.push(`支撑: ${supports.map((l) => `${l.price.toFixed(2)}(${l.source},${l.strength})`).join(', ')}`);
   }
 
   // Patterns
   if (patterns.length > 0) {
-    lines.push('\n[图表形态]');
-    for (const p of patterns) {
-      lines.push(`  ${p.name} (${p.direction}, 置信度${(p.confidence * 100).toFixed(0)}%): ${p.description}`);
-    }
+    lines.push(`形态: ${patterns.map((p) => `${p.name}(${p.direction},${(p.confidence * 100).toFixed(0)}%)`).join(', ')}`);
   }
 
-  lines.push(`\n[价格行为] ${priceAction.description}`);
-  lines.push('═══════════════════════════════════════');
+  lines.push(`价格行为: ${priceAction.description}`);
 
   return lines.join('\n');
 }
