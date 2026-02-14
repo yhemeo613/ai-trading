@@ -7,20 +7,27 @@ export function insertDecision(decision: {
   reasoning?: string;
   rawResponse?: string;
   aiProvider?: string;
+  aiModel?: string;
   riskPassed: boolean;
   riskReason?: string;
   executed: boolean;
+  indicatorsJson?: string;
+  orderbookJson?: string;
+  sentimentJson?: string;
 }) {
   const db = getDb();
   const stmt = db.prepare(`
-    INSERT INTO decisions (symbol, action, confidence, reasoning, raw_response, ai_provider, risk_passed, risk_reason, executed)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO decisions (symbol, action, confidence, reasoning, raw_response, ai_provider, ai_model, risk_passed, risk_reason, executed, indicators_json, orderbook_json, sentiment_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   return stmt.run(
     decision.symbol, decision.action, decision.confidence ?? null,
     decision.reasoning ?? null, decision.rawResponse ?? null,
-    decision.aiProvider ?? null, decision.riskPassed ? 1 : 0,
-    decision.riskReason ?? null, decision.executed ? 1 : 0
+    decision.aiProvider ?? null, decision.aiModel ?? null,
+    decision.riskPassed ? 1 : 0, decision.riskReason ?? null,
+    decision.executed ? 1 : 0,
+    decision.indicatorsJson ?? null, decision.orderbookJson ?? null,
+    decision.sentimentJson ?? null
   );
 }
 

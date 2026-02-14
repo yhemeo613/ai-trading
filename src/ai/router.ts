@@ -17,18 +17,23 @@ const allProviders: AIProvider[] = [
 
 let failCounts = new Map<string, number>();
 
-function getOrderedProviders(): AIProvider[] {
-  const preferred = config.ai.provider;
+function getOrderedProviders(preferredProvider?: string, peerProvider?: string): AIProvider[] {
+  const preferred = preferredProvider || config.ai.provider;
   const available = allProviders.filter((p) => p.isAvailable());
   const primary = available.find((p) => p.name === preferred);
-  const rest = available.filter((p) => p.name !== preferred);
-  // Sort fallbacks by least failures
+  const peer = peerProvider ? available.find((p) => p.name === peerProvider && p.name !== preferred) : undefined;
+  const rest = available.filter((p) => p.name !== preferred && p.name !== peerProvider);
+  // Sort remaining fallbacks by least failures
   rest.sort((a, b) => (failCounts.get(a.name) ?? 0) - (failCounts.get(b.name) ?? 0));
-  return primary ? [primary, ...rest] : rest;
+  const ordered: AIProvider[] = [];
+  if (primary) ordered.push(primary);
+  if (peer) ordered.push(peer);
+  ordered.push(...rest);
+  return ordered;
 }
 
-export async function aiChat(messages: AIMessage[]): Promise<AIResponse> {
-  const providers = getOrderedProviders();
+export async function aiChat(messages: AIMessage[], preferredProvider?: string, peerProvider?: string): Promise<AIResponse> {
+  const providers = getOrderedProviders(preferredProvider, peerProvider);
   if (providers.length === 0) {
     throw new Error('没有可用的 AI 提供商，请检查 .env 中的 API 密钥');
   }

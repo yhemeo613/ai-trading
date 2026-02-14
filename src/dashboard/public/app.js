@@ -1,19 +1,70 @@
 let ws;
 let equityChart;
-const decisionLog = [];
+
+// AI analysis history — kept in memory, rendered via virtual scroll
+const analysisHistory = [];
+const MAX_HISTORY = 500;
+const RENDER_BATCH = 20;
+let renderedCount = 0;
+let isLoadingMore = false;
 
 const ACTION_MAP = {
   LONG: '做多', SHORT: '做空', CLOSE: '平仓', HOLD: '观望', ADJUST: '调整',
 };
-const SIDE_MAP = { long: '多', short: '空' };
+const SIDE_MAP = { long: '多', short: '空', buy: '买', sell: '卖' };
 const SIDE_LABEL = { buy: '买入', sell: '卖出' };
+const ACTION_CLASS = { LONG: 'log-long', SHORT: 'log-short', HOLD: 'log-hold', CLOSE: 'log-close', ADJUST: 'log-adjust' };
+
+// ===== Mode toggle (testnet / mainnet) =====
+async function refreshMode() {
+  try {
+    const data = await (await fetch('/api/mode')).json();
+    updateModeBadge(data.testnet);
+  } catch (e) { /* ignore */ }
+}
+
+function updateModeBadge(isTestnet) {
+  const btn = document.getElementById('mode-toggle');
+  if (isTestnet) {
+    btn.innerHTML = '<span class="badge-dot"></span>测试网';
+    btn.className = 'badge badge-testnet';
+    btn.title = '当前: 测试网 — 点击切换到实盘';
+  } else {
+    btn.innerHTML = '<span class="badge-dot"></span>实盘';
+    btn.className = 'badge badge-mainnet';
+    btn.title = '当前: 实盘 — 点击切换到测试网';
+  }
+}
+
+async function toggleMode() {
+  const btn = document.getElementById('mode-toggle');
+  const isCurrentlyTestnet = btn.className.includes('badge-testnet');
+  const targetMode = isCurrentlyTestnet ? '实盘' : '测试网';
+
+  if (!confirm(`确认切换到${targetMode}？\n\n注意：切换前请确保已停止交易循环。`)) return;
+
+  try {
+    const res = await fetch('/api/mode/toggle', { method: 'POST' });
+    const data = await res.json();
+    if (data.ok) {
+      updateModeBadge(data.testnet);
+      refreshAll();
+    } else {
+      alert(data.message || '切换失败');
+    }
+  } catch (e) {
+    alert('切换失败: ' + e.message);
+  }
+}
 
 // ===== Tab switching =====
 function showPanel(name, el) {
   document.getElementById('panel-positions').style.display = name === 'positions' ? '' : 'none';
   document.getElementById('panel-trades').style.display = name === 'trades' ? '' : 'none';
+  document.getElementById('panel-pos-history').style.display = name === 'pos-history' ? '' : 'none';
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   el.classList.add('active');
+  if (name === 'pos-history') refreshPositionHistory();
 }
 
 // ===== WebSocket =====
@@ -22,12 +73,19 @@ function initWebSocket() {
   ws = new WebSocket(`${proto}://${location.host}/ws`);
   const badge = document.getElementById('ws-badge');
 
-  ws.onopen = () => { badge.textContent = 'WS: 已连接'; badge.className = 'badge badge-running'; };
+  ws.onopen = () => {
+    badge.innerHTML = '<span class="badge-dot"></span>WS: 已连接';
+    badge.className = 'badge badge-running';
+  };
   ws.onclose = () => {
-    badge.textContent = 'WS: 已断开'; badge.className = 'badge badge-stopped';
+    badge.innerHTML = '<span class="badge-dot"></span>WS: 已断开';
+    badge.className = 'badge badge-stopped';
     setTimeout(initWebSocket, 3000);
   };
-  ws.onerror = () => { badge.textContent = 'WS: 错误'; badge.className = 'badge badge-stopped'; };
+  ws.onerror = () => {
+    badge.innerHTML = '<span class="badge-dot"></span>WS: 错误';
+    badge.className = 'badge badge-stopped';
+  };
 
   ws.onmessage = (evt) => {
     try { handleWsMessage(JSON.parse(evt.data)); } catch (e) { console.error('WS 解析错误', e); }
@@ -37,25 +95,44 @@ function initWebSocket() {
 function handleWsMessage(msg) {
   switch (msg.type) {
     case 'account': updateAccount(msg.data); break;
-    case 'decision': addDecisionLog(msg.data); break;
-    case 'trade': refreshTrades(); break;
+    case 'tickers': updateTickers(msg.data); break;
+    case 'decision': addAnalysis(msg.data); break;
+    case 'trade': refreshTrades(); refreshPositionHistory(); break;
     case 'circuit': updateCircuit(msg.data); break;
-    case 'pairs': console.log('活跃交易对:', msg.data); break;
+    case 'pairs': updateActivePairs(msg.data); break;
   }
 }
 
-// ===== Ticker bar =====
+// ===== Realtime tickers via WebSocket =====
+function updateTickers(tickers) {
+  if (!Array.isArray(tickers)) return;
+  tickers.forEach(t => {
+    const priceEl = document.getElementById('tick-' + t.name);
+    const changeEl = document.getElementById('tick-change-' + t.name);
+    if (priceEl) {
+      priceEl.textContent = '$' + Number(t.price).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+      priceEl.className = 'ticker-price ' + (t.change >= 0 ? 'up' : 'down');
+    }
+    if (changeEl && t.change !== undefined) {
+      const sign = t.change >= 0 ? '+' : '';
+      changeEl.textContent = sign + t.change.toFixed(2) + '%';
+      changeEl.className = 'ticker-change ' + (t.change >= 0 ? 'up' : 'down');
+    }
+  });
+}
+
+// ===== Active pairs display =====
+function updateActivePairs(pairs) {
+  const el = document.getElementById('active-pairs-list');
+  if (!pairs || !pairs.length) { el.textContent = '--'; return; }
+  el.textContent = pairs.map(s => s.replace('/USDT:USDT', '')).join(' · ');
+}
+
+// ===== Ticker bar (fallback, WebSocket is primary) =====
 async function refreshTickers() {
   try {
     const tickers = await (await fetch('/api/tickers')).json();
-    if (!Array.isArray(tickers)) return;
-    tickers.forEach(t => {
-      const el = document.getElementById('tick-' + t.name);
-      if (el) {
-        el.textContent = '$' + Number(t.price).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
-        el.className = 'ticker-price ' + (t.change >= 0 ? 'up' : 'down');
-      }
-    });
+    updateTickers(tickers);
   } catch (e) { /* ignore */ }
 }
 
@@ -75,7 +152,7 @@ function updateAccount(data) {
 function renderPositions(positions) {
   const tbody = document.getElementById('positions-body');
   if (!positions.length) {
-    tbody.innerHTML = '<tr><td colspan="7" style="color:var(--text-subtle)">暂无持仓</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="empty-row">暂无持仓</td></tr>';
     return;
   }
   tbody.innerHTML = positions.map(p => `
@@ -91,39 +168,92 @@ function renderPositions(positions) {
   `).join('');
 }
 
-// ===== Decision log =====
-const ACTION_CLASS = { LONG: 'log-long', SHORT: 'log-short', HOLD: 'log-hold', CLOSE: 'log-close', ADJUST: 'log-adjust' };
+// ===== AI Analysis History (virtual scroll) =====
 
-function addDecisionLog(data) {
-  const { decision, riskCheck } = data;
+function addAnalysis(data) {
+  const { decision, riskCheck, aiProvider, aiModel, strategicProvider, strategicModel } = data;
   const time = new Date().toLocaleTimeString();
   const entry = { time, ...decision, riskPassed: riskCheck.passed, riskReason: riskCheck.reason };
-  decisionLog.unshift(entry);
-  if (decisionLog.length > 100) decisionLog.pop();
+  analysisHistory.unshift(entry);
+  if (analysisHistory.length > MAX_HISTORY) analysisHistory.pop();
 
-  // Update AI analysis panel with full reasoning
-  const analysisEl = document.getElementById('ai-analysis');
-  const actionLabel = ACTION_MAP[decision.action] || decision.action;
-  const conf = (decision.confidence * 100).toFixed(0);
-  const riskLabel = riskCheck.passed ? '✓ 风控通过' : '✗ 风控拦截: ' + riskCheck.reason;
-  analysisEl.innerHTML =
-    `<div style="color:var(--text);font-weight:700;margin-bottom:4px">[${time}] ${decision.symbol} → <span class="${ACTION_CLASS[decision.action] || ''}">${actionLabel}</span> (${conf}%)</div>` +
-    `<div style="margin-bottom:6px;color:${riskCheck.passed ? 'var(--positive)' : 'var(--negative)'};font-size:11px">${riskLabel}</div>` +
-    `<div style="color:var(--text)">${decision.reasoning || '无分析内容'}</div>` +
-    (decision.params ? `<div style="margin-top:6px;color:var(--text-subtle);font-size:11px">仓位: ${decision.params.positionSizePercent}% · 杠杆: ${decision.params.leverage}x · 止损: ${decision.params.stopLossPrice} · 止盈: ${decision.params.takeProfitPrice}</div>` : '');
+  // Update AI model badges
+  if (strategicProvider || strategicModel) {
+    document.getElementById('ai-model-badge').textContent = '战略AI: ' + (strategicModel || strategicProvider || '--');
+  }
+  if (aiProvider || aiModel) {
+    document.getElementById('ai-tactical-badge').textContent = '战术AI: ' + (aiModel || aiProvider || '--');
+  }
 
-  // Update log stream
-  const container = document.getElementById('decision-log');
-  container.innerHTML = decisionLog.map(d => `
-    <div class="log-item">
-      <span class="log-time">${d.time}</span>
-      <span class="${ACTION_CLASS[d.action] || ''}">${ACTION_MAP[d.action] || d.action}</span>
-      <span>${d.symbol}</span>
-      <span style="color:var(--text-subtle)">${(d.confidence * 100).toFixed(0)}%</span>
-      ${!d.riskPassed ? `<span class="log-blocked">[拦截: ${d.riskReason}]</span>` : ''}
-      <span class="log-reason">${d.reasoning?.slice(0, 60) || ''}</span>
-    </div>
-  `).join('');
+  // Update count badge
+  document.getElementById('analysis-count').textContent = analysisHistory.length;
+
+  // Re-render: reset to top, show latest
+  renderedCount = 0;
+  const content = document.getElementById('ai-history-content');
+  content.innerHTML = '';
+  renderMoreItems();
+
+  // Scroll to top to show latest
+  document.getElementById('ai-history-viewport').scrollTop = 0;
+}
+
+function renderAnalysisItem(entry) {
+  const actionLabel = ACTION_MAP[entry.action] || entry.action;
+  const conf = (entry.confidence * 100).toFixed(0);
+  const riskLabel = entry.riskPassed ? '通过' : '拦截: ' + entry.riskReason;
+  const riskClass = entry.riskPassed ? 'ai-risk-pass' : 'ai-risk-fail';
+  const actionClass = ACTION_CLASS[entry.action] || '';
+
+  let paramsHtml = '';
+  if (entry.params) {
+    paramsHtml = `<div class="ai-params"><span>仓位 ${entry.params.positionSizePercent}%</span><span>杠杆 ${entry.params.leverage}x</span><span>止损 ${entry.params.stopLossPrice}</span><span>止盈 ${entry.params.takeProfitPrice}</span></div>`;
+  }
+
+  const div = document.createElement('div');
+  div.className = 'ai-card';
+  div.innerHTML =
+    `<div class="ai-card-header">` +
+      `<span class="ai-card-time">${entry.time}</span>` +
+      `<span class="ai-card-symbol">${entry.symbol}</span>` +
+      `<span class="${actionClass}">${actionLabel}</span>` +
+      `<span class="ai-card-conf">${conf}%</span>` +
+      `<span class="${riskClass}">${riskLabel}</span>` +
+    `</div>` +
+    `<div class="ai-reasoning">${entry.reasoning || '无分析内容'}</div>` +
+    paramsHtml;
+
+  return div;
+}
+
+function renderMoreItems() {
+  const content = document.getElementById('ai-history-content');
+  const sentinel = document.getElementById('ai-history-sentinel');
+  const end = Math.min(renderedCount + RENDER_BATCH, analysisHistory.length);
+
+  const fragment = document.createDocumentFragment();
+  for (let i = renderedCount; i < end; i++) {
+    fragment.appendChild(renderAnalysisItem(analysisHistory[i]));
+  }
+  content.appendChild(fragment);
+  content.appendChild(sentinel);
+  renderedCount = end;
+  isLoadingMore = false;
+}
+
+// IntersectionObserver for infinite scroll
+function initVirtualScroll() {
+  const viewport = document.getElementById('ai-history-viewport');
+  const sentinel = document.getElementById('ai-history-sentinel');
+
+  const observer = new IntersectionObserver((entries) => {
+    if (entries[0].isIntersecting && !isLoadingMore && renderedCount < analysisHistory.length) {
+      isLoadingMore = true;
+      renderMoreItems();
+    }
+  }, { root: viewport, threshold: 0.1 });
+
+  observer.observe(sentinel);
 }
 
 // ===== Circuit breaker =====
@@ -131,11 +261,11 @@ function updateCircuit(state) {
   const el = document.getElementById('circuit-status');
   const detail = document.getElementById('circuit-detail');
   if (state.tripped || state.manualStop) {
-    el.textContent = '已触发';
+    el.innerHTML = '<span class="circuit-dot"></span>已触发';
     el.className = 'circuit-status negative';
     detail.textContent = state.reason;
   } else {
-    el.textContent = '正常';
+    el.innerHTML = '<span class="circuit-dot"></span>正常';
     el.className = 'circuit-status positive';
     detail.textContent = `连续亏损: ${state.consecutiveLosses}/3 · API失败: ${state.consecutiveApiFailures}/5`;
   }
@@ -148,7 +278,7 @@ async function api(url, method = 'GET') {
     const data = await res.json();
     if (data.running !== undefined) {
       const badge = document.getElementById('status-badge');
-      badge.textContent = data.running ? '运行中' : '已停止';
+      badge.innerHTML = '<span class="badge-dot"></span>' + (data.running ? '运行中' : '已停止');
       badge.className = 'badge ' + (data.running ? 'badge-running' : 'badge-stopped');
     }
     refreshAll();
@@ -160,9 +290,12 @@ async function refreshStatus() {
   try {
     const data = await (await fetch('/api/status')).json();
     const badge = document.getElementById('status-badge');
-    badge.textContent = data.running ? '运行中' : '已停止';
+    badge.innerHTML = '<span class="badge-dot"></span>' + (data.running ? '运行中' : '已停止');
     badge.className = 'badge ' + (data.running ? 'badge-running' : 'badge-stopped');
 
+    if (data.testnet !== undefined) {
+      updateModeBadge(data.testnet);
+    }
     if (data.balance) {
       document.getElementById('total-balance').textContent = data.balance.totalBalance.toFixed(2);
       document.getElementById('avail-balance').textContent = data.balance.availableBalance.toFixed(2);
@@ -176,6 +309,15 @@ async function refreshStatus() {
       document.getElementById('position-count').textContent = data.positions.length + ' 个持仓';
     }
     if (data.circuit) updateCircuit(data.circuit);
+
+    // Update AI model badges
+    if (data.aiConfig) {
+      document.getElementById('ai-model-badge').textContent = '战略AI: ' + data.aiConfig.strategicProvider;
+      document.getElementById('ai-tactical-badge').textContent = '战术AI: ' + data.aiConfig.tacticalProvider;
+    } else if (data.aiProviders && data.aiProviders.length > 0) {
+      document.getElementById('ai-model-badge').textContent = '战略AI: ' + data.aiProviders[0];
+      document.getElementById('ai-tactical-badge').textContent = '战术AI: ' + data.aiProviders[0];
+    }
   } catch (e) { console.error('状态刷新错误', e); }
 }
 
@@ -184,7 +326,7 @@ async function refreshTrades() {
     const trades = await (await fetch('/api/trades')).json();
     const tbody = document.getElementById('trades-body');
     if (!trades.length) {
-      tbody.innerHTML = '<tr><td colspan="7" style="color:var(--text-subtle)">暂无交易记录</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="empty-row">暂无交易记录</td></tr>';
       return;
     }
     tbody.innerHTML = trades.slice(0, 20).map(t => `
@@ -201,6 +343,34 @@ async function refreshTrades() {
   } catch (e) { console.error('交易刷新错误', e); }
 }
 
+async function refreshPositionHistory() {
+  try {
+    const positions = await (await fetch('/api/positions/history')).json();
+    const tbody = document.getElementById('pos-history-body');
+    if (!positions.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-row">暂无历史记录</td></tr>';
+      return;
+    }
+    tbody.innerHTML = positions.map(p => {
+      const pnlClass = p.pnl > 0 ? 'positive' : p.pnl < 0 ? 'negative' : '';
+      const statusLabel = p.status === 'open' ? '持仓中' : '已平仓';
+      const statusClass = p.status === 'open' ? 'col-long' : '';
+      return `
+        <tr>
+          <td>${p.opened_at || '--'}</td>
+          <td>${p.symbol}</td>
+          <td class="${p.side === 'buy' ? 'col-long' : 'col-short'}">${SIDE_MAP[p.side] || p.side}</td>
+          <td>${p.amount?.toFixed(4) || '--'}</td>
+          <td>${p.entry_price?.toFixed(2) || '--'}</td>
+          <td>${p.exit_price?.toFixed(2) || '--'}</td>
+          <td class="${pnlClass}">${p.pnl != null ? p.pnl.toFixed(2) : '--'}</td>
+          <td class="${statusClass}">${statusLabel}</td>
+        </tr>
+      `;
+    }).join('');
+  } catch (e) { console.error('持仓历史刷新错误', e); }
+}
+
 async function refreshEquityChart() {
   try {
     const snapshots = await (await fetch('/api/snapshots')).json();
@@ -211,6 +381,11 @@ async function refreshEquityChart() {
 
     if (!equityChart) {
       const ctx = document.getElementById('equity-chart').getContext('2d');
+
+      const gradient = ctx.createLinearGradient(0, 0, 0, 280);
+      gradient.addColorStop(0, 'rgba(59, 130, 246, 0.15)');
+      gradient.addColorStop(1, 'rgba(59, 130, 246, 0.0)');
+
       equityChart = new Chart(ctx, {
         type: 'line',
         data: {
@@ -218,28 +393,47 @@ async function refreshEquityChart() {
           datasets: [{
             label: '权益 (USDT)',
             data: balances,
-            borderColor: '#000000',
-            backgroundColor: 'rgba(0, 0, 0, 0.03)',
+            borderColor: '#3b82f6',
+            backgroundColor: gradient,
             fill: true,
-            tension: 0.1,
+            tension: 0.3,
             pointRadius: 0,
+            pointHoverRadius: 4,
+            pointHoverBackgroundColor: '#3b82f6',
+            pointHoverBorderColor: '#fff',
+            pointHoverBorderWidth: 2,
             borderWidth: 2,
           }]
         },
         options: {
           responsive: true,
           maintainAspectRatio: false,
-          plugins: { legend: { display: false } },
+          interaction: { intersect: false, mode: 'index' },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: '#1e293b',
+              titleColor: '#94a3b8',
+              bodyColor: '#e2e8f0',
+              borderColor: '#334155',
+              borderWidth: 1,
+              padding: 10,
+              titleFont: { family: "'Inter', sans-serif", size: 11 },
+              bodyFont: { family: "'JetBrains Mono', monospace", size: 12, weight: '600' },
+              displayColors: false,
+              callbacks: { label: (ctx) => ctx.parsed.y.toFixed(2) + ' USDT' }
+            }
+          },
           scales: {
             x: {
-              grid: { color: '#e0e0e0', lineWidth: 1 },
-              ticks: { color: '#666', font: { family: "'IBM Plex Mono', monospace", size: 10 }, maxTicksLimit: 10 },
-              border: { color: '#000' },
+              grid: { color: '#1e293b', lineWidth: 1 },
+              ticks: { color: '#64748b', font: { family: "'JetBrains Mono', monospace", size: 10 }, maxTicksLimit: 10 },
+              border: { color: '#334155' },
             },
             y: {
-              grid: { color: '#e0e0e0', lineWidth: 1 },
-              ticks: { color: '#666', font: { family: "'IBM Plex Mono', monospace", size: 10 } },
-              border: { color: '#000' },
+              grid: { color: '#1e293b', lineWidth: 1 },
+              ticks: { color: '#64748b', font: { family: "'JetBrains Mono', monospace", size: 10 } },
+              border: { color: '#334155' },
             },
           }
         }
@@ -273,9 +467,11 @@ function refreshAll() {
   refreshEquityChart();
   refreshDailyPnl();
   refreshTickers();
+  refreshMode();
 }
 
 // 初始化
 initWebSocket();
+initVirtualScroll();
 refreshAll();
-setInterval(refreshAll, 30000);
+setInterval(refreshAll, 60000); // 60s fallback, WebSocket handles realtime

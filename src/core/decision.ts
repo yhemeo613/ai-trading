@@ -1,19 +1,28 @@
 import { z } from 'zod';
 
 export const TradeParamsSchema = z.object({
-  positionSizePercent: z.number().min(1).max(10),
-  leverage: z.number().min(1).max(10),
-  stopLossPrice: z.number().positive(),
-  takeProfitPrice: z.number().positive(),
+  positionSizePercent: z.number().min(0),
+  leverage: z.number().min(0),
+  stopLossPrice: z.number().min(0),
+  takeProfitPrice: z.number().min(0),
   orderType: z.enum(['MARKET', 'LIMIT']),
+  addPercent: z.number().min(0).max(100).optional(),
+  reducePercent: z.number().min(0).max(100).optional(),
 });
 
+export const MarketRegimeSchema = z.enum([
+  'trending_up', 'trending_down', 'ranging', 'volatile', 'quiet',
+]);
+
+export type MarketRegime = z.infer<typeof MarketRegimeSchema>;
+
 export const AIDecisionSchema = z.object({
-  action: z.enum(['LONG', 'SHORT', 'CLOSE', 'HOLD', 'ADJUST']),
+  action: z.enum(['LONG', 'SHORT', 'CLOSE', 'HOLD', 'ADJUST', 'ADD', 'REDUCE']),
   symbol: z.string(),
   confidence: z.number().min(0).max(1),
   reasoning: z.string(),
   params: TradeParamsSchema.nullable(),
+  marketRegime: MarketRegimeSchema.optional(),
 });
 
 export type AIDecision = z.infer<typeof AIDecisionSchema>;
@@ -40,6 +49,32 @@ export const PortfolioReviewSchema = z.object({
 });
 
 export type PortfolioReview = z.infer<typeof PortfolioReviewSchema>;
+
+// ─── Strategic Output Schema ─────────────────────────────────────
+
+export const StrategicPlanActionSchema = z.object({
+  action: z.enum(['CREATE', 'MAINTAIN', 'INVALIDATE', 'NONE']),
+  direction: z.enum(['LONG', 'SHORT']).optional(),
+  entryCondition: z.string().optional(),
+  entryZoneLow: z.number().optional(),
+  entryZoneHigh: z.number().optional(),
+  targets: z.array(z.object({ price: z.number(), percent: z.number() })).optional(),
+  stopLoss: z.number().optional(),
+  invalidation: z.string().optional(),
+  invalidationPrice: z.number().optional(),
+  confidence: z.number().min(0).max(1).optional(),
+  thesis: z.string().optional(),
+});
+
+export const StrategicOutputSchema = z.object({
+  marketRegime: MarketRegimeSchema,
+  bias: z.enum(['bullish', 'bearish', 'neutral']),
+  reasoning: z.string(),
+  plan: StrategicPlanActionSchema,
+});
+
+export type StrategicOutput = z.infer<typeof StrategicOutputSchema>;
+export type StrategicPlanAction = z.infer<typeof StrategicPlanActionSchema>;
 
 /**
  * Extract the first complete JSON object from a string by tracking brace depth.
@@ -68,9 +103,31 @@ function extractJson(raw: string): string {
   throw new Error('AI 响应中 JSON 不完整');
 }
 
+/**
+ * Strip null values from an object, converting them to undefined.
+ * This handles AI responses that return null instead of omitting fields.
+ */
+function stripNulls<T extends Record<string, any>>(obj: T): T {
+  const result = { ...obj };
+  for (const key of Object.keys(result)) {
+    if (result[key] === null) {
+      delete result[key];
+    }
+  }
+  return result;
+}
+
 export function parseAIDecision(raw: string): AIDecision {
   const jsonStr = extractJson(raw);
   const parsed = JSON.parse(jsonStr);
+  // Clean null values in params before validation
+  if (parsed.params && typeof parsed.params === 'object') {
+    parsed.params = stripNulls(parsed.params);
+    // If params is now empty or all fields removed, set to null
+    if (Object.keys(parsed.params).length === 0) {
+      parsed.params = null;
+    }
+  }
   return AIDecisionSchema.parse(parsed);
 }
 
@@ -84,4 +141,14 @@ export function parsePortfolioReview(raw: string): PortfolioReview {
   const jsonStr = extractJson(raw);
   const parsed = JSON.parse(jsonStr);
   return PortfolioReviewSchema.parse(parsed);
+}
+
+export function parseStrategicOutput(raw: string): StrategicOutput {
+  const jsonStr = extractJson(raw);
+  const parsed = JSON.parse(jsonStr);
+  // Clean null values in plan before validation
+  if (parsed.plan && typeof parsed.plan === 'object') {
+    parsed.plan = stripNulls(parsed.plan);
+  }
+  return StrategicOutputSchema.parse(parsed);
 }

@@ -6,6 +6,12 @@ import { logger } from '../utils/logger';
 let exchange: Exchange | null = null;
 let publicExchange: Exchange | null = null;
 
+/** Reset cached exchange instances (used when switching testnet/mainnet). */
+export function resetExchange() {
+  exchange = null;
+  publicExchange = null;
+}
+
 function applyProxy(ex: Exchange) {
   const agent = getProxyAgent();
   if (agent) {
@@ -54,7 +60,7 @@ export function getExchange(): Exchange {
 
 /**
  * Public-only exchange (no API key) for market data.
- * Fallback when API key is invalid/expired.
+ * In testnet mode, uses testnet URLs so prices match the trading environment.
  */
 export function getPublicExchange(): Exchange {
   if (publicExchange) return publicExchange;
@@ -64,9 +70,11 @@ export function getPublicExchange(): Exchange {
     options: { defaultType: 'future' },
   });
 
+  // Testnet mode: use testnet URLs so prices match the trading environment
   if (config.testnetOnly) {
     applyTestnetUrls(publicExchange);
   }
+
   applyProxy(publicExchange);
   return publicExchange;
 }

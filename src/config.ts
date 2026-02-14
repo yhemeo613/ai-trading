@@ -44,6 +44,8 @@ export const config = {
     qwenBaseUrl: process.env.QWEN_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1',
     qwenModel: process.env.QWEN_MODEL || 'qwen-plus',
     provider: process.env.AI_PROVIDER || 'deepseek',
+    strategicProvider: process.env.AI_STRATEGIC_PROVIDER || '',
+    tacticalProvider: process.env.AI_TACTICAL_PROVIDER || '',
   },
 
   server: {
@@ -57,4 +59,4 @@ export const config = {
     maxDailyLossPct: 5,
     maxConcurrentPositions: 5,
   },
-} as const;
+};

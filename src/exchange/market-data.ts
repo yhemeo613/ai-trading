@@ -13,9 +13,10 @@ export interface MarketSnapshot {
     percentage: number;
   };
   klines: {
+    '1m': any[][];
+    '5m': any[][];
+    '15m': any[][];
     '1h': any[][];
-    '4h': any[][];
-    '1d': any[][];
   };
   orderbook: {
     bids: [number, number][];
@@ -61,11 +62,12 @@ export async function fetchTopSymbolsByVolume(limit = 30): Promise<string[]> {
 }
 
 export async function fetchMarketSnapshot(symbol: string): Promise<MarketSnapshot> {
-  const [ticker, klines1h, klines4h, klines1d, orderbook, fundingRate] = await Promise.all([
+  const [ticker, klines1m, klines5m, klines15m, klines1h, orderbook, fundingRate] = await Promise.all([
     fetchTicker(symbol),
-    fetchKlines(symbol, '1h'),
-    fetchKlines(symbol, '4h'),
-    fetchKlines(symbol, '1d'),
+    fetchKlines(symbol, '1m', 120),
+    fetchKlines(symbol, '5m', 120),
+    fetchKlines(symbol, '15m', 100),
+    fetchKlines(symbol, '1h', 100),
     fetchOrderbook(symbol),
     fetchFundingRate(symbol),
   ]);
@@ -81,13 +83,14 @@ export async function fetchMarketSnapshot(symbol: string): Promise<MarketSnapsho
       percentage: ticker.percentage ?? 0,
     },
     klines: {
+      '1m': klines1m,
+      '5m': klines5m,
+      '15m': klines15m,
       '1h': klines1h,
-      '4h': klines4h,
-      '1d': klines1d,
     },
     orderbook: {
-      bids: orderbook.bids.slice(0, 10) as [number, number][],
-      asks: orderbook.asks.slice(0, 10) as [number, number][],
+      bids: orderbook.bids.slice(0, 20) as [number, number][],
+      asks: orderbook.asks.slice(0, 20) as [number, number][],
     },
     fundingRate,
   };

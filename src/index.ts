@@ -4,7 +4,7 @@ import http from 'http';
 import { config } from './config';
 import { logger } from './utils/logger';
 import { getDb, closeDb } from './persistence/db';
-import { initWebSocket } from './dashboard/websocket';
+import { initWebSocket, stopRealtimePush } from './dashboard/websocket';
 import dashboardRoutes from './dashboard/routes';
 import { startLoop, stopLoop } from './core/loop';
 import { getExchange, getPublicExchange } from './exchange/client';
@@ -71,6 +71,7 @@ async function boot() {
 function shutdown() {
   logger.info('正在关闭...');
   stopLoop();
+  stopRealtimePush();
   closeDb();
   server.close();
   process.exit(0);

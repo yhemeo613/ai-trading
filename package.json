@@ -6,7 +6,8 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "ts-node src/index.ts"
+    "dev": "ts-node src/index.ts",
+    "reset:db": "node scripts/reset-db.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",
@@ -16,6 +17,7 @@
     "express": "^4.21.2",
     "https-proxy-agent": "^7.0.6",
     "socks-proxy-agent": "^8.0.5",
+    "technicalindicators": "^3.1.0",
     "winston": "^3.17.0",
     "ws": "^8.18.0",
     "zod": "^3.24.1"

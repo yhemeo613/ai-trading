@@ -10,6 +10,8 @@ interface CircuitState {
   consecutiveApiFailures: number;
   dailyLossPct: number;
   manualStop: boolean;
+  winStreak: number;
+  lossStreak: number;
 }
 
 const state: CircuitState = {
@@ -21,6 +23,8 @@ const state: CircuitState = {
   consecutiveApiFailures: 0,
   dailyLossPct: 0,
   manualStop: false,
+  winStreak: 0,
+  lossStreak: 0,
 };
 
 export function isCircuitTripped(): boolean {
@@ -45,12 +49,20 @@ export function getCircuitState() {
 export function recordTradeResult(pnlPct: number) {
   if (pnlPct < 0) {
     state.consecutiveLosses++;
+    state.lossStreak++;
+    state.winStreak = 0;
     if (state.consecutiveLosses >= 3) {
       tripCircuit(`连续亏损 3 次`);
     }
   } else {
     state.consecutiveLosses = 0;
+    state.winStreak++;
+    state.lossStreak = 0;
   }
+}
+
+export function getStreakInfo(): { winStreak: number; lossStreak: number } {
+  return { winStreak: state.winStreak, lossStreak: state.lossStreak };
 }
 
 export function updateDailyLoss(dailyLossPct: number) {
@@ -85,6 +97,8 @@ export function resetCircuit() {
   state.consecutiveLosses = 0;
   state.consecutiveApiFailures = 0;
   state.manualStop = false;
+  state.winStreak = 0;
+  state.lossStreak = 0;
   logger.info('熔断器已重置');
 }
 
