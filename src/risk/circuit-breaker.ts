@@ -65,10 +65,11 @@ export function getStreakInfo(): { winStreak: number; lossStreak: number } {
   return { winStreak: state.winStreak, lossStreak: state.lossStreak };
 }
 
-export function updateDailyLoss(dailyLossPct: number) {
+export function updateDailyLoss(dailyLossPct: number, maxDailyLossPct?: number) {
   state.dailyLossPct = dailyLossPct;
-  if (dailyLossPct >= config.risk.maxDailyLossPct) {
-    tripCircuit(`日亏损 ${dailyLossPct.toFixed(2)}% 超过限制 ${config.risk.maxDailyLossPct}%`);
+  const limit = maxDailyLossPct ?? config.risk.maxDailyLossPct;
+  if (dailyLossPct >= limit) {
+    tripCircuit(`日亏损 ${dailyLossPct.toFixed(2)}% 超过限制 ${limit}%`);
   }
 }
 

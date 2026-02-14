@@ -12,6 +12,7 @@ import { getStreakInfo } from '../risk/circuit-breaker';
 import { getOpenPositionBySymbol } from '../persistence/models/position';
 import { getPositionOperations } from '../persistence/models/position-ops';
 import { logger } from '../utils/logger';
+import { formatLimitsForPrompt, type DynamicRiskLimits } from '../risk/dynamic-limits';
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -27,7 +28,13 @@ export interface TacticalSessionResult {
 
 // ─── Prompt Building ─────────────────────────────────────────────
 
-function buildTacticalSystemPrompt(): string {
+function buildTacticalSystemPrompt(dynamicLimits?: DynamicRiskLimits): string {
+  const limitsBlock = dynamicLimits
+    ? `\n${formatLimitsForPrompt(dynamicLimits)}\n根据以上动态风控限制调整仓位和杠杆。`
+    : `- 小账户(<500U)：仓位15%-25%，杠杆8x-15x，趋势明确时果断重仓
+- 中账户(500-2000U)：仓位10%-18%，杠杆5x-10x
+- 大账户(>2000U)：仓位5%-12%，杠杆3x-8x，逐步保守`;
+
   return `你是果断的交易执行者。战略方向已定，你负责执行。先思考再回答JSON。
 
 ## 任务
@@ -42,9 +49,7 @@ function buildTacticalSystemPrompt(): string {
 
 ## 仓位管理
 - 盈利>2%+趋势延续→ADD(30-50%)；亏损+微观反弹→REDUCE(30-50%做T)
-- 小账户(<500U)：仓位15%-25%，杠杆8x-15x，趋势明确时果断重仓
-- 中账户(500-2000U)：仓位10%-18%，杠杆5x-10x
-- 大账户(>2000U)：仓位5%-12%，杠杆3x-8x，逐步保守
+${limitsBlock}
 
 ## 优先级
 有仓位: CLOSE>REDUCE>ADD>ADJUST>HOLD
@@ -174,9 +179,10 @@ export async function runTacticalExecution(
   orderbook: OrderbookAnalysis,
   sentiment: MarketSentiment,
   signal?: AbortSignal,
+  dynamicLimits?: DynamicRiskLimits,
 ): Promise<TacticalSessionResult> {
   const messages: AIMessage[] = [
-    { role: 'system', content: buildTacticalSystemPrompt() },
+    { role: 'system', content: buildTacticalSystemPrompt(dynamicLimits) },
     {
       role: 'user',
       content: buildTacticalUserPrompt(

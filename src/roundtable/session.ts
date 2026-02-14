@@ -265,7 +265,7 @@ export async function runRoundtableSession(
   const chairmanStart = Date.now();
   try {
     chairmanDecision = await withTimeout(
-      runChairmanSynthesis(symbol, round1, round2, input.account.balance.totalBalance, signal),
+      runChairmanSynthesis(symbol, round1, round2, input.account.balance.totalBalance, input.account.dynamicLimits, signal),
       chairmanTimeout,
       '主席综合决策',
     );

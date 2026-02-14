@@ -3,6 +3,7 @@ import { AccountBalance, PositionInfo } from '../exchange/account';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 import { getDb } from '../persistence/db';
+import type { DynamicRiskLimits } from './dynamic-limits';
 
 export interface RiskCheckResult {
   passed: boolean;
@@ -12,8 +13,17 @@ export interface RiskCheckResult {
 export function checkHardLimits(
   decision: AIDecision,
   balance: AccountBalance,
-  positions: PositionInfo[]
+  positions: PositionInfo[],
+  dynamicLimits?: DynamicRiskLimits,
 ): RiskCheckResult {
+  const limits = {
+    maxPositionPct: dynamicLimits?.maxPositionPct ?? config.risk.maxPositionPct,
+    maxLeverage: dynamicLimits?.maxLeverage ?? config.risk.maxLeverage,
+    maxTotalExposurePct: dynamicLimits?.maxTotalExposurePct ?? config.risk.maxTotalExposurePct,
+    maxConcurrentPositions: dynamicLimits?.maxConcurrentPositions ?? config.risk.maxConcurrentPositions,
+  };
+  const tierTag = dynamicLimits ? ` (${dynamicLimits.tierLabel})` : '';
+
   if (config.testnetOnly) {
     logger.info('风控检查: 测试网模式，AI 自主决策');
   }
@@ -79,8 +89,8 @@ export function checkHardLimits(
   }
 
   // 杠杆上限检查
-  if (params.leverage && params.leverage > config.risk.maxLeverage) {
-    return { passed: false, reason: `杠杆 ${params.leverage}x 超过上限 ${config.risk.maxLeverage}x` };
+  if (params.leverage && params.leverage > limits.maxLeverage) {
+    return { passed: false, reason: `杠杆 ${params.leverage}x 超过上限 ${limits.maxLeverage}x${tierTag}` };
   }
 
   // 唯一的硬性检查：余额必须大于 0
@@ -89,20 +99,20 @@ export function checkHardLimits(
   }
 
   // 单仓位占比检查
-  if (params.positionSizePercent && params.positionSizePercent > config.risk.maxPositionPct) {
+  if (params.positionSizePercent && params.positionSizePercent > limits.maxPositionPct) {
     return {
       passed: false,
-      reason: `仓位占比 ${params.positionSizePercent}% 超过上限 ${config.risk.maxPositionPct}%`,
+      reason: `仓位占比 ${params.positionSizePercent}% 超过上限 ${limits.maxPositionPct}%${tierTag}`,
     };
   }
 
   // 最大并发持仓检查 (仅新开仓)
   if (decision.action === 'LONG' || decision.action === 'SHORT') {
     const existingPos = positions.find((p) => p.symbol === decision.symbol);
-    if (!existingPos && positions.length >= config.risk.maxConcurrentPositions) {
+    if (!existingPos && positions.length >= limits.maxConcurrentPositions) {
       return {
         passed: false,
-        reason: `已达最大并发持仓数 ${config.risk.maxConcurrentPositions}`,
+        reason: `已达最大并发持仓数 ${limits.maxConcurrentPositions}${tierTag}`,
       };
     }
   }
@@ -115,10 +125,10 @@ export function checkHardLimits(
   const totalExposurePct = balance.totalBalance > 0
     ? ((currentExposure + newNotional) / balance.totalBalance) * 100
     : 0;
-  if (totalExposurePct > config.risk.maxTotalExposurePct) {
+  if (totalExposurePct > limits.maxTotalExposurePct) {
     return {
       passed: false,
-      reason: `总敞口 ${totalExposurePct.toFixed(1)}% 超过上限 ${config.risk.maxTotalExposurePct}%`,
+      reason: `总敞口 ${totalExposurePct.toFixed(1)}% 超过上限 ${limits.maxTotalExposurePct}%${tierTag}`,
     };
   }
 

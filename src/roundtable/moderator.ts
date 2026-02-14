@@ -3,6 +3,7 @@ import type { AIMessage } from '../ai/provider';
 import type { Round1Opinion, Round2Response, ChairmanDecision } from './types';
 import { ChairmanDecisionSchema } from './types';
 import { logger } from '../utils/logger';
+import { formatLimitsForPrompt, type DynamicRiskLimits } from '../risk/dynamic-limits';
 
 /**
  * Extract the first complete JSON object from a string.
@@ -67,9 +68,16 @@ export async function runChairmanSynthesis(
   round1: Round1Opinion[],
   round2: Round2Response[] | null,
   totalBalance: number,
+  dynamicLimits?: DynamicRiskLimits,
   signal?: AbortSignal,
 ): Promise<ChairmanDecision> {
   const riskVeto = detectRiskVeto(round1, round2);
+
+  const limitsBlock = dynamicLimits
+    ? `\n${formatLimitsForPrompt(dynamicLimits)}\n根据账户分档动态调整仓位和杠杆，严格遵守以上限制。`
+    : `- 小账户(<500U)：仓位15%-25%，杠杆8x-15x，果断重仓抓趋势
+- 中账户(500-2000U)：仓位10%-18%，杠杆5x-10x
+- 大账户(>2000U)：仓位5%-12%，杠杆3x-8x`;
 
   const systemPrompt = `你是交易圆桌会议主席，综合所有角色分析做出最终决策。
 
@@ -81,9 +89,7 @@ export async function runChairmanSynthesis(
 - 多数角色方向一致时果断决策，不因少数保守意见HOLD
 - 风险经理否决权仅限极端情况（熔断器触发、连亏5+、杠杆超限）
 - 小余额≠不交易，小账户更需要抓住趋势机会，用合理仓位积极参与
-- 小账户(<500U)：仓位15%-25%，杠杆8x-15x，果断重仓抓趋势
-- 中账户(500-2000U)：仓位10%-18%，杠杆5x-10x
-- 大账户(>2000U)：仓位5%-12%，杠杆3x-8x
+${limitsBlock}
 - 趋势明确时果断>完美，不要因为部分角色说HOLD就放弃明确的趋势机会
 - 如果reasoning中认为应该做多/做空，action就必须是LONG/SHORT，绝对不能reasoning说做多但action写HOLD
 - HOLD只用于真正没有方向或风险极端的情况，不是"谨慎"的默认选项
@@ -94,7 +100,7 @@ ${riskVeto ? '⚠️ 风险经理已行使否决权（极端风险）' : ''}
 返回严格JSON:
 {"action":"LONG|SHORT|CLOSE|HOLD|ADJUST|ADD|REDUCE","confidence":0-1,"reasoning":"中文综合分析","consensusLevel":"unanimous|strong_majority|majority|split|overruled","keyDebatePoints":["点1","点2"],"dissent":"少数派意见","riskManagerVerdict":"风险经理意见","params":{"positionSizePercent":num,"leverage":num,"stopLossPrice":num,"takeProfitPrice":num,"orderType":"MARKET|LIMIT"},"marketRegime":"trending_up|trending_down|ranging|volatile|quiet"}`;
 
-  const balanceTier = totalBalance < 500 ? '小账户' : totalBalance < 2000 ? '中账户' : '大账户';
+  const balanceTier = dynamicLimits?.tierLabel ?? (totalBalance < 500 ? '小账户' : totalBalance < 2000 ? '中账户' : '大账户');
   let userContent = `交易对: ${symbol} | 账户: ${totalBalance.toFixed(0)}U (${balanceTier})\n\n`;
   userContent += `═══ 第一轮：独立分析 ═══\n${formatRound1ForChairman(round1)}\n\n`;
   if (round2) {

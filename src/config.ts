@@ -63,11 +63,11 @@ export const config = {
   },
 
   risk: {
-    maxPositionPct: 30,
-    maxTotalExposurePct: 60,
-    maxLeverage: 20,
-    maxDailyLossPct: 10,
-    maxConcurrentPositions: 3,
+    maxPositionPct: envInt('RISK_MAX_POSITION_PCT', '30'),
+    maxTotalExposurePct: envInt('RISK_MAX_TOTAL_EXPOSURE_PCT', '300'),
+    maxLeverage: envInt('RISK_MAX_LEVERAGE', '20'),
+    maxDailyLossPct: envInt('RISK_MAX_DAILY_LOSS_PCT', '10'),
+    maxConcurrentPositions: envInt('RISK_MAX_CONCURRENT_POSITIONS', '6'),
   },
 
   roundtable: {

@@ -5,6 +5,7 @@ import { getTradingPairs } from './pair-selector';
 import { checkHardLimits } from '../risk/hard-limits';
 import { executeDecision, closePosition } from '../exchange/executor';
 import { isCircuitTripped, recordTradeResult, recordApiFailure, recordApiSuccess, updateDailyLoss, getCircuitState } from '../risk/circuit-breaker';
+import { computeDynamicLimits, type DynamicRiskLimits } from '../risk/dynamic-limits';
 import { insertTrade } from '../persistence/models/trade';
 import { insertDecision, updateDecisionExecuted } from '../persistence/models/decision';
 import { insertSnapshot, updateDailyPnl } from '../persistence/models/snapshot';
@@ -145,6 +146,8 @@ async function tick() {
   const positions = await fetchPositions();
   recordApiSuccess();
 
+  const dynamicLimits = computeDynamicLimits(balance);
+
   const positionSymbols = positions.map((p) => p.symbol).filter((s) => !basePairs.includes(s));
 
   // Clean up orphaned positions: if DB says position is open but exchange has no position,
@@ -194,7 +197,7 @@ async function tick() {
   const dailyRow = getDb().prepare('SELECT * FROM daily_pnl WHERE date = ?').get(today) as any;
   if (dailyRow && dailyRow.starting_balance > 0) {
     const lossPct = ((dailyRow.starting_balance - balance.totalBalance) / dailyRow.starting_balance) * 100;
-    if (lossPct > 0) updateDailyLoss(lossPct);
+    if (lossPct > 0) updateDailyLoss(lossPct, dynamicLimits.maxDailyLossPct);
   }
 
   broadcast({
@@ -237,7 +240,7 @@ async function tick() {
     const batch = allPairs.slice(i, i + batchSize);
     const filteredBatch = batch.filter((symbol) => !closedBySltp.has(symbol));
     const results = await Promise.allSettled(
-      filteredBatch.map((symbol) => processSymbol(symbol, balance, positions))
+      filteredBatch.map((symbol) => processSymbol(symbol, balance, positions, dynamicLimits))
     );
 
     for (let j = 0; j < results.length; j++) {
@@ -393,7 +396,8 @@ async function checkStopLossAndTakeProfit(
 async function processSymbol(
   symbol: string,
   balance: ReturnType<typeof import('../exchange/account').fetchBalance> extends Promise<infer T> ? T : never,
-  positions: ReturnType<typeof import('../exchange/account').fetchPositions> extends Promise<infer T> ? T : never
+  positions: ReturnType<typeof import('../exchange/account').fetchPositions> extends Promise<infer T> ? T : never,
+  dynamicLimits: DynamicRiskLimits,
 ) {
   logger.info(`正在处理 ${symbol}`);
   const useRoundtable = config.roundtable.enabled;
@@ -585,6 +589,7 @@ async function processSymbol(
           positions,
           circuitBreakerState: getCircuitFullState(),
           streakInfo: getStreakInfo(),
+          dynamicLimits,
         },
         strategy: {
           strategicContext,
@@ -623,6 +628,7 @@ async function processSymbol(
         snapshot, balance, positions, strategicContext,
         allIndicators, orderbookAnalysis, sentiment,
         loopAbortController?.signal,
+        dynamicLimits,
       );
       if (!running) return;
       decision = tacticalResult.decision;
@@ -644,7 +650,7 @@ async function processSymbol(
   });
 
   // 8. Risk check + execute (same as before)
-  const riskCheck = checkHardLimits(decision, balance, positions);
+  const riskCheck = checkHardLimits(decision, balance, positions, dynamicLimits);
 
   const decisionResult = insertDecision({
     symbol: decision.symbol,

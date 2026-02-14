@@ -112,6 +112,7 @@ export interface RoundtableAccountData {
   positions: any[];
   circuitBreakerState: any;
   streakInfo: { winStreak: number; lossStreak: number };
+  dynamicLimits?: import('../risk/dynamic-limits').DynamicRiskLimits;
 }
 
 export interface RoundtableStrategyData {

@@ -1,5 +1,6 @@
 import { BaseRole } from './base-role';
 import type { RoundtableSessionInput } from '../types';
+import { formatLimitsForPrompt } from '../../risk/dynamic-limits';
 
 export class RiskManager extends BaseRole {
   readonly roleName = '风险经理';
@@ -23,9 +24,7 @@ export class RiskManager extends BaseRole {
 ## 决策原则（重要）
 - 你的核心职责是建议合理的仓位大小和杠杆，而不是阻止交易
 - 账户余额小不是否决理由，小账户更需要抓住趋势机会来积累资金
-- 小账户（<500U）：仓位 15%-25%，杠杆 8x-15x，目标快速积累资金
-- 中账户（500-2000U）：仓位 10%-18%，杠杆 5x-10x
-- 大账户（>2000U）：仓位 5%-12%，杠杆 3x-8x，逐步保守
+- 请参考市场数据中的【当前风控限制】来确定仓位和杠杆范围
 - 趋势明确时应该给出与趋势一致的stance（LONG/SHORT），而不是HOLD
 - 只有在上述极端否决条件满足时才否决，其他情况通过调整参数来控制风险
 - 不要因为"谨慎"就否决一切，过度保守导致错过机会也是一种风险
@@ -75,6 +74,8 @@ export class RiskManager extends BaseRole {
       strategy.positionThesis ? `【入场论点】\n  ${strategy.positionThesis}` : '',
       '',
       `请从风险管理角度评估，是否应该执行交易。如果风险过高，请行使否决权（stance 设为 HOLD 并在 keyPoints 中注明"一票否决"）。`,
+      '',
+      formatLimitsForPrompt(account.dynamicLimits),
     ];
     return lines.join('\n');
   }
