@@ -1,0 +1,29 @@
+{
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(dir:*)",
+      "WebSearch",
+      "WebFetch(domain:www.indiehackers.com)",
+      "WebFetch(domain:www.producthunt.com)",
+      "WebFetch(domain:news.ycombinator.com)",
+      "Bash(npx create-next-app:*)",
+      "Bash(npm install:*)",
+      "Bash(npx shadcn@latest init:*)",
+      "Bash(npx shadcn@latest add button card input textarea dialog dropdown-menu avatar badge separator tabs sheet scroll-area tooltip switch label select form -y)",
+      "Bash(ls \"C:\\\\Users\\\\ASUS\\\\Desktop\\\\ai项目\\\\smartchat\\\\src\\\\hooks\"\" 2>nul || echo \"hooks directory does not exist \")",
+      "Bash(npx tsc:*)",
+      "Bash(node -e:*)",
+      "Bash(ls \"C:\\\\Users\\\\ASUS\\\\Desktop\\\\ai项目\\\\smartchat\\\\src\\\\app\\\\api\\\\documents\"\" 2>nul || echo \"NOT FOUND \")",
+      "Bash(ls \"C:\\\\Users\\\\ASUS\\\\Desktop\\\\ai项目\\\\smartchat\\\\src\\\\app\\\\api\\\\conversations\"\" 2>nul || echo \"NOT FOUND \")",
+      "Bash(ls \"C:\\\\Users\\\\ASUS\\\\Desktop\\\\ai项目\\\\smartchat\\\\src\\\\hooks\"\" 2>nul || echo \"NOT FOUND \")",
+      "Bash(ls \"C:\\\\Users\\\\ASUS\\\\Desktop\\\\ai项目\\\\smartchat\\\\src\\\\lib\\\\supabase\"\" 2>nul || echo \"NOT FOUND \")",
+      "Bash(powershell -Command:*)",
+      "Bash(node scripts/setup-db.mjs:*)",
+      "Bash(findstr:*)",
+      "Bash(del \"C:\\\\Users\\\\ASUS\\\\Desktop\\\\ai项目\\\\smartchat\\\\src\\\\proxy.ts\")"
+    ]
+  }
+}

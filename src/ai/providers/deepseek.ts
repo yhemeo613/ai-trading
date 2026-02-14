@@ -9,7 +9,7 @@ export class DeepSeekProvider implements AIProvider {
     return !!config.ai.deepseekKey;
   }
 
-  async chat(messages: AIMessage[]): Promise<AIResponse> {
+  async chat(messages: AIMessage[], signal?: AbortSignal): Promise<AIResponse> {
     const data = await aiFetch(`${config.ai.deepseekBaseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -20,12 +20,16 @@ export class DeepSeekProvider implements AIProvider {
         model: config.ai.deepseekModel,
         messages,
         temperature: 0.3,
-        max_tokens: 2000,
+        max_tokens: 4000,
       }),
+      signal,
     });
 
+    const content = data.choices?.[0]?.message?.content;
+    if (!content) throw new Error('DeepSeek 返回空响应');
+
     return {
-      content: data.choices[0].message.content,
+      content,
       provider: this.name,
       model: config.ai.deepseekModel,
       usage: data.usage ? {

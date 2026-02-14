@@ -23,13 +23,19 @@ export function getProxyAgent(): HttpsProxyAgent<string> | SocksProxyAgent | und
  * Proxy-aware HTTP fetch for AI providers.
  * Uses Node's http/https modules with the proxy agent.
  */
-export async function aiFetch(url: string, options: { method: string; headers: Record<string, string>; body: string }): Promise<any> {
+export async function aiFetch(url: string, options: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal }): Promise<any> {
   const agent = getProxyAgent();
   const parsedUrl = new URL(url);
   const isHttps = parsedUrl.protocol === 'https:';
   const lib = isHttps ? https : http;
 
   return new Promise((resolve, reject) => {
+    // Check if already aborted before starting
+    if (options.signal?.aborted) {
+      reject(new Error('AI 请求已取消'));
+      return;
+    }
+
     const req = lib.request(
       url,
       {
@@ -53,7 +59,26 @@ export async function aiFetch(url: string, options: { method: string; headers: R
         });
       }
     );
-    req.on('error', reject);
+
+    // Listen for abort signal to destroy the in-flight request
+    if (options.signal) {
+      const onAbort = () => {
+        req.destroy();
+        reject(new Error('AI 请求已取消'));
+      };
+      options.signal.addEventListener('abort', onAbort, { once: true });
+      // Clean up listener when request completes normally
+      req.on('close', () => options.signal!.removeEventListener('abort', onAbort));
+    }
+
+    req.on('error', (err) => {
+      // Don't report abort-caused errors as unexpected
+      if (options.signal?.aborted) {
+        reject(new Error('AI 请求已取消'));
+      } else {
+        reject(err);
+      }
+    });
     req.setTimeout(60000, () => {
       req.destroy();
       reject(new Error('请求超时 (60秒)'));

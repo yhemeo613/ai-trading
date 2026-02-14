@@ -201,6 +201,12 @@ body {
   animation: pulse 1.5s ease-in-out infinite;
 }
 
+#mode-toggle:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 /* ===== BUTTONS ===== */
 .btn {
   font-family: var(--font);
@@ -256,6 +262,12 @@ body {
 .btn-outline:hover {
   background: var(--surface-elevated);
   color: var(--text);
+}
+
+.btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
 }
 
 /* ===== TICKER BAR ===== */
@@ -657,6 +669,65 @@ tr:last-child td { border-bottom: none; }
   display: inline-flex;
   align-items: center;
   gap: 4px;
+}
+
+/* AI Thinking (chain-of-thought) */
+.ai-thinking {
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+
+.ai-thinking-toggle {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+  padding: 4px 0;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ai-thinking-toggle::before {
+  content: '▶';
+  font-size: 8px;
+  transition: transform 0.15s;
+}
+
+.ai-thinking[open] .ai-thinking-toggle::before {
+  transform: rotate(90deg);
+}
+
+.ai-thinking-toggle:hover {
+  color: var(--text-secondary);
+}
+
+.ai-thinking-section {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+}
+
+.ai-thinking-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+
+.ai-thinking-text {
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--text-subtle);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .analysis-count {

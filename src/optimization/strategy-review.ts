@@ -2,6 +2,7 @@ import { getDb } from '../persistence/db';
 import { insertMemory } from '../memory/memory-store';
 import { aiChat } from '../ai/router';
 import { AIMessage } from '../ai/provider';
+import { config } from '../config';
 import { logger } from '../utils/logger';
 
 let lastReviewTradeCount = 0;
@@ -103,7 +104,8 @@ ${JSON.stringify(analysis.recentTrades.slice(0, 20), null, 2)}
       { role: 'user', content: prompt },
     ];
 
-    const response = await aiChat(messages);
+    const auxProvider = config.ai.auxiliaryProvider || undefined;
+    const response = await aiChat(messages, auxProvider);
     const jsonMatch = response.content.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0]);

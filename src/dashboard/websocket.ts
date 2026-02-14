@@ -14,6 +14,9 @@ export function initWebSocket(server: http.Server) {
   wss = new WebSocket.Server({ server, path: '/ws' });
   wss.on('connection', (ws) => {
     logger.info('WebSocket 客户端已连接');
+    ws.on('error', (err) => {
+      logger.warn('WebSocket 客户端错误', { error: err.message });
+    });
     ws.on('close', () => logger.info('WebSocket 客户端已断开'));
   });
   logger.info('WebSocket 服务已在 /ws 路径初始化');

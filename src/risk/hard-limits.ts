@@ -42,8 +42,8 @@ export function checkHardLimits(
     if (dbPos && dbPos.add_count >= 2) {
       return { passed: false, reason: '加仓失败: 已达最大加仓次数(2次)' };
     }
-    // Must be profitable > 1.5%
-    const pnlPct = pos.notional > 0 ? (pos.unrealizedPnl / (pos.notional / pos.leverage)) * 100 : 0;
+    // Must be profitable > 1.5% — use exchange-reported percentage to avoid division issues
+    const pnlPct = pos.percentage;
     if (pnlPct < 1.5) {
       return { passed: false, reason: `加仓失败: 当前盈利 ${pnlPct.toFixed(2)}% 不足1.5%` };
     }
@@ -78,9 +78,48 @@ export function checkHardLimits(
     return { passed: true };
   }
 
+  // 杠杆上限检查
+  if (params.leverage && params.leverage > config.risk.maxLeverage) {
+    return { passed: false, reason: `杠杆 ${params.leverage}x 超过上限 ${config.risk.maxLeverage}x` };
+  }
+
   // 唯一的硬性检查：余额必须大于 0
   if (balance.availableBalance <= 0) {
     return { passed: false, reason: '可用余额不足' };
+  }
+
+  // 单仓位占比检查
+  if (params.positionSizePercent && params.positionSizePercent > config.risk.maxPositionPct) {
+    return {
+      passed: false,
+      reason: `仓位占比 ${params.positionSizePercent}% 超过上限 ${config.risk.maxPositionPct}%`,
+    };
+  }
+
+  // 最大并发持仓检查 (仅新开仓)
+  if (decision.action === 'LONG' || decision.action === 'SHORT') {
+    const existingPos = positions.find((p) => p.symbol === decision.symbol);
+    if (!existingPos && positions.length >= config.risk.maxConcurrentPositions) {
+      return {
+        passed: false,
+        reason: `已达最大并发持仓数 ${config.risk.maxConcurrentPositions}`,
+      };
+    }
+  }
+
+  // 总敞口检查
+  const currentExposure = positions.reduce((sum, p) => sum + p.notional, 0);
+  const newNotional = balance.totalBalance > 0
+    ? (balance.totalBalance * (params.positionSizePercent ?? 0) / 100) * (params.leverage ?? 1)
+    : 0;
+  const totalExposurePct = balance.totalBalance > 0
+    ? ((currentExposure + newNotional) / balance.totalBalance) * 100
+    : 0;
+  if (totalExposurePct > config.risk.maxTotalExposurePct) {
+    return {
+      passed: false,
+      reason: `总敞口 ${totalExposurePct.toFixed(1)}% 超过上限 ${config.risk.maxTotalExposurePct}%`,
+    };
   }
 
   return { passed: true };

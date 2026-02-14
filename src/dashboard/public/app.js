@@ -8,6 +8,12 @@ const RENDER_BATCH = 20;
 let renderedCount = 0;
 let isLoadingMore = false;
 
+// Escape HTML to prevent XSS
+function escapeHtml(str) {
+  if (typeof str !== 'string') return String(str ?? '');
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
+
 const ACTION_MAP = {
   LONG: '做多', SHORT: '做空', CLOSE: '平仓', HOLD: '观望', ADJUST: '调整',
 };
@@ -41,13 +47,24 @@ async function toggleMode() {
   const isCurrentlyTestnet = btn.className.includes('badge-testnet');
   const targetMode = isCurrentlyTestnet ? '实盘' : '测试网';
 
-  if (!confirm(`确认切换到${targetMode}？\n\n注意：切换前请确保已停止交易循环。`)) return;
+  const warning = isCurrentlyTestnet
+    ? '确认切换到实盘？\n\n交易循环将自动停止，所有缓存状态将被清除。\n实盘模式将使用真实资金交易！'
+    : '确认切换到测试网？\n\n交易循环将自动停止，所有缓存状态将被清除。';
+
+  if (!confirm(warning)) return;
 
   try {
     const res = await fetch('/api/mode/toggle', { method: 'POST' });
     const data = await res.json();
     if (data.ok) {
       updateModeBadge(data.testnet);
+      if (data.running !== undefined) {
+        const badge = document.getElementById('status-badge');
+        badge.innerHTML = '<span class="badge-dot"></span>' + (data.running ? '运行中' : '已停止');
+        badge.className = 'badge ' + (data.running ? 'badge-running' : 'badge-stopped');
+      }
+      if (data.circuit) updateCircuit(data.circuit);
+      syncControlButtons(data.running, data.circuit);
       refreshAll();
     } else {
       alert(data.message || '切换失败');
@@ -98,7 +115,7 @@ function handleWsMessage(msg) {
     case 'tickers': updateTickers(msg.data); break;
     case 'decision': addAnalysis(msg.data); break;
     case 'trade': refreshTrades(); refreshPositionHistory(); break;
-    case 'circuit': updateCircuit(msg.data); break;
+    case 'circuit': updateCircuit(msg.data); syncControlButtons(null, msg.data); break;
     case 'pairs': updateActivePairs(msg.data); break;
   }
 }
@@ -138,15 +155,20 @@ async function refreshTickers() {
 
 // ===== Account =====
 function updateAccount(data) {
+  if (!data) return;
   const { balance, positions, unrealizedPnl } = data;
-  document.getElementById('total-balance').textContent = balance.totalBalance.toFixed(2);
-  document.getElementById('avail-balance').textContent = balance.availableBalance.toFixed(2);
+  if (balance) {
+    document.getElementById('total-balance').textContent = (balance.totalBalance ?? 0).toFixed(2);
+    document.getElementById('avail-balance').textContent = (balance.availableBalance ?? 0).toFixed(2);
+  }
 
+  const pnl = unrealizedPnl ?? 0;
   const pnlEl = document.getElementById('unrealized-pnl');
-  pnlEl.textContent = (unrealizedPnl >= 0 ? '+' : '') + unrealizedPnl.toFixed(2);
-  pnlEl.className = 'stat-value ' + (unrealizedPnl >= 0 ? 'positive' : 'negative');
-  document.getElementById('position-count').textContent = positions.length + ' 个持仓';
-  renderPositions(positions);
+  pnlEl.textContent = (pnl >= 0 ? '+' : '') + pnl.toFixed(2);
+  pnlEl.className = 'stat-value ' + (pnl >= 0 ? 'positive' : 'negative');
+  const posArr = Array.isArray(positions) ? positions : [];
+  document.getElementById('position-count').textContent = posArr.length + ' 个持仓';
+  renderPositions(posArr);
 }
 
 function renderPositions(positions) {
@@ -157,13 +179,13 @@ function renderPositions(positions) {
   }
   tbody.innerHTML = positions.map(p => `
     <tr>
-      <td>${p.symbol}</td>
-      <td class="col-${p.side}">${SIDE_MAP[p.side] || p.side}</td>
-      <td>${p.contracts}</td>
-      <td>${p.entryPrice}</td>
-      <td>${p.markPrice}</td>
-      <td class="${p.unrealizedPnl >= 0 ? 'positive' : 'negative'}">${p.unrealizedPnl.toFixed(2)}</td>
-      <td>${p.leverage}x</td>
+      <td>${escapeHtml(p.symbol)}</td>
+      <td class="col-${p.side === 'long' ? 'long' : 'short'}">${escapeHtml(SIDE_MAP[p.side] || p.side)}</td>
+      <td>${escapeHtml(p.contracts)}</td>
+      <td>${escapeHtml(p.entryPrice)}</td>
+      <td>${escapeHtml(p.markPrice)}</td>
+      <td class="${(p.unrealizedPnl ?? 0) >= 0 ? 'positive' : 'negative'}">${(p.unrealizedPnl ?? 0).toFixed(2)}</td>
+      <td>${escapeHtml(p.leverage)}x</td>
     </tr>
   `).join('');
 }
@@ -171,9 +193,9 @@ function renderPositions(positions) {
 // ===== AI Analysis History (virtual scroll) =====
 
 function addAnalysis(data) {
-  const { decision, riskCheck, aiProvider, aiModel, strategicProvider, strategicModel } = data;
+  const { decision, riskCheck, aiProvider, aiModel, strategicProvider, strategicModel, tacticalThinking, strategicThinking } = data;
   const time = new Date().toLocaleTimeString();
-  const entry = { time, ...decision, riskPassed: riskCheck.passed, riskReason: riskCheck.reason };
+  const entry = { time, ...decision, riskPassed: riskCheck.passed, riskReason: riskCheck.reason, tacticalThinking: tacticalThinking || '', strategicThinking: strategicThinking || '' };
   analysisHistory.unshift(entry);
   if (analysisHistory.length > MAX_HISTORY) analysisHistory.pop();
 
@@ -207,21 +229,34 @@ function renderAnalysisItem(entry) {
 
   let paramsHtml = '';
   if (entry.params) {
-    paramsHtml = `<div class="ai-params"><span>仓位 ${entry.params.positionSizePercent}%</span><span>杠杆 ${entry.params.leverage}x</span><span>止损 ${entry.params.stopLossPrice}</span><span>止盈 ${entry.params.takeProfitPrice}</span></div>`;
+    paramsHtml = `<div class="ai-params"><span>仓位 ${escapeHtml(entry.params.positionSizePercent)}%</span><span>杠杆 ${escapeHtml(entry.params.leverage)}x</span><span>止损 ${escapeHtml(entry.params.stopLossPrice)}</span><span>止盈 ${escapeHtml(entry.params.takeProfitPrice)}</span></div>`;
+  }
+
+  let thinkingHtml = '';
+  if (entry.strategicThinking || entry.tacticalThinking) {
+    const sections = [];
+    if (entry.strategicThinking) {
+      sections.push(`<div class="ai-thinking-section"><div class="ai-thinking-label">战略思考</div><div class="ai-thinking-text">${escapeHtml(entry.strategicThinking)}</div></div>`);
+    }
+    if (entry.tacticalThinking) {
+      sections.push(`<div class="ai-thinking-section"><div class="ai-thinking-label">战术思考</div><div class="ai-thinking-text">${escapeHtml(entry.tacticalThinking)}</div></div>`);
+    }
+    thinkingHtml = `<details class="ai-thinking"><summary class="ai-thinking-toggle">查看思考过程</summary>${sections.join('')}</details>`;
   }
 
   const div = document.createElement('div');
   div.className = 'ai-card';
   div.innerHTML =
     `<div class="ai-card-header">` +
-      `<span class="ai-card-time">${entry.time}</span>` +
-      `<span class="ai-card-symbol">${entry.symbol}</span>` +
-      `<span class="${actionClass}">${actionLabel}</span>` +
+      `<span class="ai-card-time">${escapeHtml(entry.time)}</span>` +
+      `<span class="ai-card-symbol">${escapeHtml(entry.symbol)}</span>` +
+      `<span class="${actionClass}">${escapeHtml(actionLabel)}</span>` +
       `<span class="ai-card-conf">${conf}%</span>` +
-      `<span class="${riskClass}">${riskLabel}</span>` +
+      `<span class="${riskClass}">${escapeHtml(riskLabel)}</span>` +
     `</div>` +
-    `<div class="ai-reasoning">${entry.reasoning || '无分析内容'}</div>` +
-    paramsHtml;
+    `<div class="ai-reasoning">${escapeHtml(entry.reasoning || '无分析内容')}</div>` +
+    paramsHtml +
+    thinkingHtml;
 
   return div;
 }
@@ -271,16 +306,55 @@ function updateCircuit(state) {
   }
 }
 
+// ===== Unified control button state management =====
+// Single source of truth: always pass both running + circuit to get correct states.
+// Cache last known values so partial updates still work.
+let _lastRunning = false;
+let _lastCircuit = null;
+
+function syncControlButtons(running, circuit) {
+  if (running !== undefined && running !== null) _lastRunning = running;
+  if (circuit !== undefined && circuit !== null) _lastCircuit = circuit;
+
+  const r = _lastRunning;
+  const circuitTripped = _lastCircuit && (_lastCircuit.tripped || _lastCircuit.manualStop);
+
+  const btnStart = document.getElementById('btn-start');
+  const btnStop = document.getElementById('btn-stop');
+  const btnEmergency = document.getElementById('btn-emergency');
+  const btnCircuitReset = document.getElementById('btn-circuit-reset');
+  const btnMode = document.getElementById('mode-toggle');
+
+  // Start: enabled only when stopped AND circuit is normal
+  if (btnStart) btnStart.disabled = r || !!circuitTripped;
+  // Stop: enabled only when running
+  if (btnStop) btnStop.disabled = !r;
+  // Emergency: enabled only when running
+  if (btnEmergency) btnEmergency.disabled = !r;
+  // Circuit reset: enabled only when circuit is tripped
+  if (btnCircuitReset) btnCircuitReset.disabled = !circuitTripped;
+  // Mode toggle: disabled when running (must stop first)
+  if (btnMode) btnMode.disabled = r;
+}
+
 // ===== API =====
 async function api(url, method = 'GET') {
   try {
     const res = await fetch(url, { method });
     const data = await res.json();
+    // Update status badge
     if (data.running !== undefined) {
       const badge = document.getElementById('status-badge');
       badge.innerHTML = '<span class="badge-dot"></span>' + (data.running ? '运行中' : '已停止');
       badge.className = 'badge ' + (data.running ? 'badge-running' : 'badge-stopped');
     }
+    // Update circuit display
+    const circuitData = data.circuit;
+    if (circuitData) updateCircuit(circuitData);
+    // Sync all button states
+    syncControlButtons(data.running, circuitData);
+    // Alert on failure
+    if (!data.ok && data.message) alert(data.message);
     refreshAll();
     return data;
   } catch (e) { console.error('API 错误', e); }
@@ -290,8 +364,9 @@ async function refreshStatus() {
   try {
     const data = await (await fetch('/api/status')).json();
     const badge = document.getElementById('status-badge');
-    badge.innerHTML = '<span class="badge-dot"></span>' + (data.running ? '运行中' : '已停止');
-    badge.className = 'badge ' + (data.running ? 'badge-running' : 'badge-stopped');
+    const running = data.running;
+    badge.innerHTML = '<span class="badge-dot"></span>' + (running ? '运行中' : '已停止');
+    badge.className = 'badge ' + (running ? 'badge-running' : 'badge-stopped');
 
     if (data.testnet !== undefined) {
       updateModeBadge(data.testnet);
@@ -309,14 +384,18 @@ async function refreshStatus() {
       document.getElementById('position-count').textContent = data.positions.length + ' 个持仓';
     }
     if (data.circuit) updateCircuit(data.circuit);
+    // Sync all button states with authoritative data from /api/status
+    syncControlButtons(running, data.circuit);
 
     // Update AI model badges
     if (data.aiConfig) {
       document.getElementById('ai-model-badge').textContent = '战略AI: ' + data.aiConfig.strategicProvider;
       document.getElementById('ai-tactical-badge').textContent = '战术AI: ' + data.aiConfig.tacticalProvider;
+      document.getElementById('ai-auxiliary-badge').textContent = '辅助AI: ' + data.aiConfig.auxiliaryProvider;
     } else if (data.aiProviders && data.aiProviders.length > 0) {
       document.getElementById('ai-model-badge').textContent = '战略AI: ' + data.aiProviders[0];
       document.getElementById('ai-tactical-badge').textContent = '战术AI: ' + data.aiProviders[0];
+      document.getElementById('ai-auxiliary-badge').textContent = '辅助AI: ' + data.aiProviders[0];
     }
   } catch (e) { console.error('状态刷新错误', e); }
 }
@@ -331,10 +410,10 @@ async function refreshTrades() {
     }
     tbody.innerHTML = trades.slice(0, 20).map(t => `
       <tr>
-        <td>${t.created_at || '--'}</td>
-        <td>${t.symbol}</td>
-        <td class="${t.action === 'LONG' || t.action === 'SHORT' ? (t.action === 'LONG' ? 'col-long' : 'col-short') : ''}">${ACTION_MAP[t.action] || t.action}</td>
-        <td class="${t.side === 'buy' ? 'col-long' : 'col-short'}">${SIDE_LABEL[t.side] || (t.side || '').toUpperCase()}</td>
+        <td>${escapeHtml(t.created_at || '--')}</td>
+        <td>${escapeHtml(t.symbol)}</td>
+        <td class="${t.action === 'LONG' || t.action === 'SHORT' ? (t.action === 'LONG' ? 'col-long' : 'col-short') : ''}">${escapeHtml(ACTION_MAP[t.action] || t.action)}</td>
+        <td class="${t.side === 'buy' ? 'col-long' : 'col-short'}">${escapeHtml(SIDE_LABEL[t.side] || (t.side || '').toUpperCase())}</td>
         <td>${t.amount?.toFixed(4) || '--'}</td>
         <td>${t.price?.toFixed(2) || '--'}</td>
         <td>${t.confidence ? (t.confidence * 100).toFixed(0) + '%' : '--'}</td>
@@ -357,9 +436,9 @@ async function refreshPositionHistory() {
       const statusClass = p.status === 'open' ? 'col-long' : '';
       return `
         <tr>
-          <td>${p.opened_at || '--'}</td>
-          <td>${p.symbol}</td>
-          <td class="${p.side === 'buy' ? 'col-long' : 'col-short'}">${SIDE_MAP[p.side] || p.side}</td>
+          <td>${escapeHtml(p.opened_at || '--')}</td>
+          <td>${escapeHtml(p.symbol)}</td>
+          <td class="${p.side === 'buy' ? 'col-long' : 'col-short'}">${escapeHtml(SIDE_MAP[p.side] || p.side)}</td>
           <td>${p.amount?.toFixed(4) || '--'}</td>
           <td>${p.entry_price?.toFixed(2) || '--'}</td>
           <td>${p.exit_price?.toFixed(2) || '--'}</td>

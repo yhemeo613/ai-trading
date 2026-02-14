@@ -1,5 +1,6 @@
 import { aiChat } from '../ai/router';
 import { AIMessage } from '../ai/provider';
+import { config } from '../config';
 import { AIDecision, MarketRegime, parseAIDecision } from './decision';
 import { MarketSnapshot } from '../exchange/market-data';
 import { AccountBalance, PositionInfo } from '../exchange/account';
@@ -128,6 +129,13 @@ function buildSystemPrompt(): string {
 - 基础仓位 = 胜率 × 2 - 1（Kelly比例的一半）
 - 连胜时可适当加大（最多1.5倍基础仓位）
 - 连败时必须缩小（最少0.5倍基础仓位）
+
+### 杠杆使用
+- 杠杆范围: 2x-10x，根据市场环境和置信度调整
+- 趋势明确 + 高置信度: 5x-10x
+- 趋势不明确 / 震荡: 2x-5x
+- 高波动环境: 2x-3x
+- 不要使用 1x 杠杆，合约交易至少 2x 起步
 
 ## 决策优先级（有仓位时）
 CLOSE > REDUCE > ADD > ADJUST > HOLD
@@ -327,18 +335,20 @@ export async function runTradingSession(
     marketRegime,
   });
 
+  const auxProvider = config.ai.auxiliaryProvider || undefined;
+
+  let response;
   try {
-    const response = await aiChat(messages);
+    response = await aiChat(messages, auxProvider);
     logger.info(`AI 响应来自 ${response.provider}/${response.model}`, {
       usage: response.usage,
     });
-    return buildResult(response);
   } catch (firstErr) {
     logger.warn('首次 AI 调用失败，正在重试', {
       error: firstErr instanceof Error ? firstErr.message : String(firstErr),
     });
-
-    const response = await aiChat(messages);
-    return buildResult(response);
+    response = await aiChat(messages, auxProvider);
   }
+
+  return buildResult(response);
 }

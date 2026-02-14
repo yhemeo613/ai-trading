@@ -16,6 +16,7 @@ export interface StrategicContext {
   marketRegime: MarketRegime;
   bias: 'bullish' | 'bearish' | 'neutral';
   reasoning: string;
+  thinking: string;
   narrative: MarketNarrative;
   plan?: StrategicOutput['plan'];
   fetchedAt: number;
@@ -30,6 +31,10 @@ const STRATEGIC_INTERVAL = 5 * 60 * 1000; // 5 minutes
 
 export function getCachedStrategicContext(symbol: string): StrategicContext | undefined {
   return strategicCache.get(symbol);
+}
+
+export function clearStrategicCache() {
+  strategicCache.clear();
 }
 
 export function shouldRunStrategicAnalysis(
@@ -49,6 +54,16 @@ export function shouldRunStrategicAnalysis(
 
 function buildStrategicSystemPrompt(): string {
   return `你是一位顶级交易策略师。你的任务是分析大周期市场结构，制定交易计划。
+
+## 回复格式
+请先在 <think>...</think> 标签内写出你的完整思考过程（中文），包括：
+1. 大周期趋势判断（1h EMA排列、ADX、MACD）
+2. 中周期结构分析（15m 回调位置、形态、动量）
+3. 关键支撑/阻力位识别
+4. 现有计划评估（如有）
+5. 最终方向判断和计划制定理由
+
+然后在标签外返回严格JSON。
 
 ## 决策框架
 1. 先看1h确定大方向（趋势、关键位、市场环境）
@@ -148,6 +163,7 @@ export async function runStrategicAnalysis(
   narrative: MarketNarrative,
   indicators: { [tf: string]: TechnicalIndicators },
   currentPrice: number,
+  signal?: AbortSignal,
 ): Promise<StrategicContext> {
   const memoryContext = buildMemoryContext(symbol);
   const sessionEvents = formatSessionEvents(symbol);
@@ -164,7 +180,7 @@ export async function runStrategicAnalysis(
     },
   ];
 
-  const response = await aiChat(messages, config.ai.strategicProvider || undefined, config.ai.tacticalProvider || undefined);
+  const response = await aiChat(messages, config.ai.strategicProvider || undefined, config.ai.tacticalProvider || undefined, signal);
   logger.info(`${symbol} 战略分析响应来自 ${response.provider}/${response.model}`);
 
   const output = parseStrategicOutput(response.content);
@@ -174,6 +190,7 @@ export async function runStrategicAnalysis(
     marketRegime: output.marketRegime,
     bias: output.bias,
     reasoning: output.reasoning,
+    thinking: output.thinking || '',
     narrative,
     plan: output.plan,
     fetchedAt: Date.now(),

@@ -60,6 +60,17 @@ export async function executeDecision(
     return null;
   }
 
+  // LONG/SHORT 必须有完整参数
+  if (!params.positionSizePercent || !params.leverage || !params.stopLossPrice || !params.takeProfitPrice) {
+    logger.warn(`${decision.action} 缺少必要参数: ${decision.symbol}`, {
+      positionSizePercent: params.positionSizePercent,
+      leverage: params.leverage,
+      stopLossPrice: params.stopLossPrice,
+      takeProfitPrice: params.takeProfitPrice,
+    });
+    return null;
+  }
+
   // Set leverage
   await setLeverage(decision.symbol, params.leverage);
 
@@ -100,15 +111,11 @@ export async function executeDecision(
 
   logger.info(`订单已下: ${side} ${numAmount} ${decision.symbol}`, { orderId: order.id });
 
-  // Place separate SL/TP orders
-  const closeSide = side === 'buy' ? 'sell' : 'buy';
-  await placeSLTP(decision.symbol, closeSide, numAmount, params.stopLossPrice, params.takeProfitPrice);
-
   return {
     orderId: order.id,
     symbol: decision.symbol,
     side,
-    type: params.orderType,
+    type: params.orderType || 'MARKET',
     amount: numAmount,
     price: order.price ?? price,
     status: order.status ?? 'created',
@@ -116,51 +123,8 @@ export async function executeDecision(
 }
 
 /**
- * Place separate stop-loss and take-profit orders for a position.
- * Binance doesn't support SL+TP in a single order, so we place them individually.
- */
-async function placeSLTP(
-  symbol: string,
-  closeSide: string,
-  amount: number,
-  stopLossPrice: number,
-  takeProfitPrice: number,
-): Promise<void> {
-  const ex = getExchange();
-  const roundedAmount = parseFloat(ex.amountToPrecision(symbol, amount));
-
-  try {
-    const slPrice = parseFloat(ex.priceToPrecision(symbol, stopLossPrice));
-    await retry(
-      () => ex.createOrder(symbol, 'market', closeSide, roundedAmount, slPrice, {
-        stopLossPrice: slPrice,
-        reduceOnly: true,
-      }),
-      `placeSL(${symbol})`
-    );
-    logger.info(`${symbol} 止损已设置: ${slPrice}`);
-  } catch (err: any) {
-    logger.warn(`${symbol} 止损设置失败: ${err.message}`);
-  }
-
-  try {
-    const tpPrice = parseFloat(ex.priceToPrecision(symbol, takeProfitPrice));
-    await retry(
-      () => ex.createOrder(symbol, 'market', closeSide, roundedAmount, tpPrice, {
-        takeProfitPrice: tpPrice,
-        reduceOnly: true,
-      }),
-      `placeTP(${symbol})`
-    );
-    logger.info(`${symbol} 止盈已设置: ${tpPrice}`);
-  } catch (err: any) {
-    logger.warn(`${symbol} 止盈设置失败: ${err.message}`);
-  }
-}
-
-/**
- * Adjust an existing position's stop loss and take profit orders.
- * Cancels existing orders and places new ones.
+ * Adjust an existing position's stop loss and take profit.
+ * SL/TP are now tracked in the DB and monitored by the application layer.
  */
 async function adjustPosition(symbol: string, params: TradeParams | null): Promise<OrderResult | null> {
   if (!params) {
@@ -177,19 +141,10 @@ async function adjustPosition(symbol: string, params: TradeParams | null): Promi
     return null;
   }
 
-  // Cancel existing conditional orders for this symbol
-  try {
-    await ex.cancelAllOrders(symbol);
-    logger.info(`${symbol} 调整前已取消现有订单`);
-  } catch (err: any) {
-    logger.warn(`${symbol} 取消订单失败: ${err.message}`);
-  }
-
   const amount = Math.abs(pos.contracts);
   const closeSide = pos.side === 'long' ? 'sell' : 'buy';
 
-  await placeSLTP(symbol, closeSide, amount, params.stopLossPrice, params.takeProfitPrice);
-
+  // SL/TP now tracked in DB and monitored by application layer
   return {
     orderId: 'adjust-' + Date.now(),
     symbol,
@@ -203,7 +158,6 @@ async function adjustPosition(symbol: string, params: TradeParams | null): Promi
 
 /**
  * Add to an existing position (same direction).
- * Cancels old SL/TP and sets new ones based on updated position size.
  */
 async function addToPosition(symbol: string, params: TradeParams | null): Promise<OrderResult | null> {
   if (!params) {
@@ -241,19 +195,6 @@ async function addToPosition(symbol: string, params: TradeParams | null): Promis
   );
 
   logger.info(`加仓已执行: ${side} ${numAmount} ${symbol}`, { orderId: order.id });
-
-  // Cancel old SL/TP and set new ones for total position
-  try {
-    await ex.cancelAllOrders(symbol);
-    logger.info(`${symbol} 加仓后已取消旧订单`);
-  } catch (err: any) {
-    logger.warn(`${symbol} 取消旧订单失败: ${err.message}`);
-  }
-
-  const newTotalAmount = currentAmount + numAmount;
-  const closeSide = side === 'buy' ? 'sell' : 'buy';
-
-  await placeSLTP(symbol, closeSide, newTotalAmount, params.stopLossPrice, params.takeProfitPrice);
 
   return {
     orderId: order.id,
@@ -319,6 +260,7 @@ async function reducePosition(symbol: string, params: TradeParams | null): Promi
 
 export async function closePosition(symbol: string): Promise<OrderResult | null> {
   const ex = getExchange();
+
   const positions = await retry(() => ex.fetchPositions([symbol]), `fetchPositions(${symbol})`);
   const pos = positions.find((p) => p.symbol === symbol && Math.abs(p.contracts ?? 0) > 0);
 
@@ -328,7 +270,16 @@ export async function closePosition(symbol: string): Promise<OrderResult | null>
   }
 
   const side = pos.side === 'long' ? 'sell' : 'buy';
-  const amount = Math.abs(pos.contracts);
+  const rawAmount = Math.abs(pos.contracts);
+
+  // Round to exchange precision to avoid order rejection
+  const roundedAmount = ex.amountToPrecision(symbol, rawAmount);
+  const amount = parseFloat(roundedAmount);
+
+  if (amount <= 0) {
+    logger.warn(`${symbol} 平仓数量过小`);
+    return null;
+  }
 
   const order = await retry(
     () => ex.createOrder(symbol, 'market', side, amount, undefined, { reduceOnly: true }),
@@ -336,14 +287,6 @@ export async function closePosition(symbol: string): Promise<OrderResult | null>
   );
 
   logger.info(`仓位已平: ${symbol}`, { orderId: order.id });
-
-  // Cancel remaining orders for this symbol
-  try {
-    await ex.cancelAllOrders(symbol);
-    logger.info(`${symbol} 剩余订单已取消`);
-  } catch (err: any) {
-    logger.warn(`${symbol} 取消剩余订单失败: ${err.message}`);
-  }
 
   return {
     orderId: order.id,

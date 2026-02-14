@@ -9,7 +9,7 @@ export class AnthropicProvider implements AIProvider {
     return !!config.ai.anthropicKey;
   }
 
-  async chat(messages: AIMessage[]): Promise<AIResponse> {
+  async chat(messages: AIMessage[], signal?: AbortSignal): Promise<AIResponse> {
     const systemMsg = messages.find((m) => m.role === 'system')?.content || '';
     const nonSystemMsgs = messages.filter((m) => m.role !== 'system');
 
@@ -27,10 +27,14 @@ export class AnthropicProvider implements AIProvider {
         messages: nonSystemMsgs.map((m) => ({ role: m.role, content: m.content })),
         temperature: 0.3,
       }),
+      signal,
     });
 
+    const content = data.content?.[0]?.text;
+    if (!content) throw new Error('Anthropic 返回空响应');
+
     return {
-      content: data.content[0].text,
+      content,
       provider: this.name,
       model: config.ai.anthropicModel,
       usage: data.usage ? {

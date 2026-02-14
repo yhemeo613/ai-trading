@@ -9,7 +9,7 @@ export class GeminiProvider implements AIProvider {
     return !!config.ai.geminiKey;
   }
 
-  async chat(messages: AIMessage[]): Promise<AIResponse> {
+  async chat(messages: AIMessage[], signal?: AbortSignal): Promise<AIResponse> {
     const systemMsg = messages.find((m) => m.role === 'system')?.content || '';
     const nonSystemMsgs = messages.filter((m) => m.role !== 'system');
 
@@ -25,12 +25,16 @@ export class GeminiProvider implements AIProvider {
       body: JSON.stringify({
         system_instruction: systemMsg ? { parts: [{ text: systemMsg }] } : undefined,
         contents,
-        generationConfig: { temperature: 0.3, maxOutputTokens: 2000 },
+        generationConfig: { temperature: 0.3, maxOutputTokens: 4000 },
       }),
+      signal,
     });
 
+    const content = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!content) throw new Error('Gemini 返回空响应');
+
     return {
-      content: data.candidates[0].content.parts[0].text,
+      content,
       provider: this.name,
       model: config.ai.geminiModel,
     };

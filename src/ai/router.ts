@@ -32,7 +32,7 @@ function getOrderedProviders(preferredProvider?: string, peerProvider?: string):
   return ordered;
 }
 
-export async function aiChat(messages: AIMessage[], preferredProvider?: string, peerProvider?: string): Promise<AIResponse> {
+export async function aiChat(messages: AIMessage[], preferredProvider?: string, peerProvider?: string, signal?: AbortSignal): Promise<AIResponse> {
   const providers = getOrderedProviders(preferredProvider, peerProvider);
   if (providers.length === 0) {
     throw new Error('没有可用的 AI 提供商，请检查 .env 中的 API 密钥');
@@ -40,13 +40,21 @@ export async function aiChat(messages: AIMessage[], preferredProvider?: string, 
 
   let lastError: Error | undefined;
   for (const provider of providers) {
+    // Check abort before trying next provider
+    if (signal?.aborted) {
+      throw new Error('AI 请求已取消');
+    }
     try {
       logger.info(`正在调用 AI 提供商: ${provider.name}`);
-      const response = await provider.chat(messages);
+      const response = await provider.chat(messages, signal);
       failCounts.set(provider.name, 0);
       return response;
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
+      // If aborted, don't try fallback providers — stop immediately
+      if (signal?.aborted) {
+        throw new Error('AI 请求已取消');
+      }
       const count = (failCounts.get(provider.name) ?? 0) + 1;
       failCounts.set(provider.name, count);
       logger.warn(`AI 提供商 ${provider.name} 调用失败 (次数: ${count})`, {
@@ -68,4 +76,9 @@ export function getProviderStats(): Record<string, number> {
     stats[name] = count;
   }
   return stats;
+}
+
+/** Reset failure counts — useful for testing. */
+export function resetFailCounts(): void {
+  failCounts.clear();
 }

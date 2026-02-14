@@ -13,5 +13,5 @@ export interface AIResponse {
 export interface AIProvider {
   name: string;
   isAvailable(): boolean;
-  chat(messages: AIMessage[]): Promise<AIResponse>;
+  chat(messages: AIMessage[], signal?: AbortSignal): Promise<AIResponse>;
 }

@@ -17,6 +17,7 @@ import { logger } from '../utils/logger';
 
 export interface TacticalSessionResult {
   decision: AIDecision;
+  thinking: string;
   aiProvider: string;
   aiModel: string;
   indicatorsJson: string;
@@ -28,6 +29,15 @@ export interface TacticalSessionResult {
 
 function buildTacticalSystemPrompt(): string {
   return `你是一位果断的交易执行者。战略分析师已经给出了大方向和交易计划。
+
+## 回复格式
+请先在 <think>...</think> 标签内写出你的完整思考过程（中文），包括：
+1. 账户与仓位评估（余额、已有持仓、盈亏状况）
+2. 战略上下文理解（大方向、计划、入场区间）
+3. 短周期技术面分析（1m/5m 指标、K线形态、订单簿）
+4. 最终决策理由
+
+然后在标签外返回严格JSON。
 
 ## 你的任务
 1. 判断当前是否适合执行计划
@@ -55,6 +65,14 @@ function buildTacticalSystemPrompt(): string {
 - 盈利 > 2% 且趋势延续时考虑 ADD（加仓30-50%）
 - 亏损但出现微观反弹信号时考虑 REDUCE（减仓30-50%做T）
 - 动态追踪止损保护利润
+
+## 杠杆与仓位指导
+- 杠杆范围: 2x-10x，根据市场环境和置信度调整
+- 趋势明确 + 高置信度: 5x-10x
+- 趋势不明确 / 震荡: 2x-5x
+- 高波动环境: 2x-3x
+- 仓位大小: 5%-15% 可用余额
+- 不要使用 1x 杠杆，合约交易至少 2x 起步
 
 ## 决策优先级
 有仓位: CLOSE > REDUCE > ADD > ADJUST > HOLD
@@ -222,6 +240,7 @@ export async function runTacticalExecution(
   allIndicators: { [tf: string]: TechnicalIndicators },
   orderbook: OrderbookAnalysis,
   sentiment: MarketSentiment,
+  signal?: AbortSignal,
 ): Promise<TacticalSessionResult> {
   const messages: AIMessage[] = [
     { role: 'system', content: buildTacticalSystemPrompt() },
@@ -234,26 +253,36 @@ export async function runTacticalExecution(
     },
   ];
 
-  const buildResult = (response: { content: string; provider: string; model: string }): TacticalSessionResult => ({
-    decision: parseAIDecision(response.content),
-    aiProvider: response.provider,
-    aiModel: response.model,
-    indicatorsJson: JSON.stringify(allIndicators),
-    orderbookJson: JSON.stringify(orderbook),
-    sentimentJson: JSON.stringify(sentiment),
-  });
+  const buildResult = (response: { content: string; provider: string; model: string }): TacticalSessionResult => {
+    const parsed = parseAIDecision(response.content);
+    const { thinking, ...decision } = parsed;
+    return {
+      decision,
+      thinking: thinking || '',
+      aiProvider: response.provider,
+      aiModel: response.model,
+      indicatorsJson: JSON.stringify(allIndicators),
+      orderbookJson: JSON.stringify(orderbook),
+      sentimentJson: JSON.stringify(sentiment),
+    };
+  };
 
+  const tacticalProvider = config.ai.tacticalProvider || undefined;
+  const strategicProvider = config.ai.strategicProvider || undefined;
+
+  let response;
   try {
-    const tacticalProvider = config.ai.tacticalProvider || undefined;
-    const strategicProvider = config.ai.strategicProvider || undefined;
-    const response = await aiChat(messages, tacticalProvider, strategicProvider);
+    response = await aiChat(messages, tacticalProvider, strategicProvider, signal);
     logger.info(`${snapshot.symbol} 战术执行响应来自 ${response.provider}/${response.model}`);
-    return buildResult(response);
   } catch (firstErr) {
+    // If aborted, don't retry
+    if (signal?.aborted) throw firstErr;
     logger.warn('战术AI调用失败，正在重试', {
       error: firstErr instanceof Error ? firstErr.message : String(firstErr),
     });
-    const response = await aiChat(messages, config.ai.tacticalProvider || undefined, config.ai.strategicProvider || undefined);
-    return buildResult(response);
+    response = await aiChat(messages, tacticalProvider, strategicProvider, signal);
+    logger.info(`${snapshot.symbol} 战术执行重试响应来自 ${response.provider}/${response.model}`);
   }
+
+  return buildResult(response);
 }

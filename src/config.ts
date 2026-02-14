@@ -9,8 +9,17 @@ function env(key: string, fallback?: string): string {
   return val;
 }
 
+function envInt(key: string, fallback: string): number {
+  const raw = env(key, fallback);
+  const parsed = parseInt(raw, 10);
+  if (isNaN(parsed)) throw new Error(`环境变量 ${key} 必须是整数，收到: "${raw}"`);
+  return parsed;
+}
+
+const testnetOnly = env('TESTNET_ONLY', 'True').toLowerCase() === 'true';
+
 export const config = {
-  testnetOnly: env('TESTNET_ONLY', 'True').toLowerCase() === 'true',
+  testnetOnly,
 
   binance: {
     apiKey: env('BINANCE_API_KEY'),
@@ -46,10 +55,11 @@ export const config = {
     provider: process.env.AI_PROVIDER || 'deepseek',
     strategicProvider: process.env.AI_STRATEGIC_PROVIDER || '',
     tacticalProvider: process.env.AI_TACTICAL_PROVIDER || '',
+    auxiliaryProvider: process.env.AI_AUXILIARY_PROVIDER || '',
   },
 
   server: {
-    port: parseInt(env('PORT', '3000'), 10),
+    port: envInt('PORT', '3000'),
   },
 
   risk: {
@@ -60,3 +70,10 @@ export const config = {
     maxConcurrentPositions: 5,
   },
 };
+
+// Validate: live mode requires live API keys
+if (!testnetOnly) {
+  if (!config.binanceLive.apiKey || !config.binanceLive.secret) {
+    throw new Error('实盘模式需要设置 BINANCE_LIVE_API_KEY 和 BINANCE_LIVE_SECRET_KEY');
+  }
+}

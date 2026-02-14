@@ -1,5 +1,6 @@
 import { aiChat } from '../ai/router';
 import { AIMessage } from '../ai/provider';
+import { config } from '../config';
 import { parsePortfolioReview, PortfolioReview } from '../core/decision';
 import { AccountBalance, PositionInfo } from '../exchange/account';
 import { logger } from '../utils/logger';
@@ -52,7 +53,8 @@ ${posStr}
   ];
 
   try {
-    const response = await aiChat(messages);
+    const auxProvider = config.ai.auxiliaryProvider || undefined;
+    const response = await aiChat(messages, auxProvider);
     const review = parsePortfolioReview(response.content);
     logger.info('投资组合审查完成', { assessment: review.overallAssessment });
     return review;

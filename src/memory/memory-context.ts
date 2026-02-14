@@ -97,7 +97,7 @@ export function buildMemoryContext(symbol: string, marketCondition?: string): st
     const observations = db.prepare(`
       SELECT content, market_condition, created_at FROM strategy_memory
       WHERE (symbol = ? OR symbol = '*')
-        AND memory_type LIKE 'observation_%' OR memory_type LIKE 'session_%'
+        AND (memory_type LIKE 'observation_%' OR memory_type LIKE 'session_%')
         AND created_at > datetime('now', '-4 hours')
       ORDER BY created_at DESC LIMIT 5
     `).all(symbol) as any[];

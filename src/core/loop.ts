@@ -3,8 +3,7 @@ import { fetchMarketSnapshot } from '../exchange/market-data';
 import { fetchBalance, fetchPositions } from '../exchange/account';
 import { getTradingPairs } from './pair-selector';
 import { checkHardLimits } from '../risk/hard-limits';
-import { executeDecision } from '../exchange/executor';
-import { getExchange } from '../exchange/client';
+import { executeDecision, closePosition } from '../exchange/executor';
 import { isCircuitTripped, recordTradeResult, recordApiFailure, recordApiSuccess, updateDailyLoss, getCircuitState } from '../risk/circuit-breaker';
 import { insertTrade } from '../persistence/models/trade';
 import { insertDecision, updateDecisionExecuted } from '../persistence/models/decision';
@@ -28,8 +27,12 @@ import { insertMarketObservation } from '../memory/memory-store';
 import type { TechnicalIndicators, OrderbookAnalysis, MarketSentiment } from '../analysis/indicators';
 
 let running = false;
+let sltpMonitorRunning = false;
+let sltpLock = false; // Prevent concurrent SL/TP processing
+let loopAbortController: AbortController | null = null;
 
 const LOOP_INTERVAL = 60 * 1000;
+const SLTP_MONITOR_INTERVAL = 5 * 1000;
 const SCAN_INTERVAL = 5 * 60 * 1000;
 const MAX_CONCURRENCY = 3;
 let lastScanTime = 0;
@@ -40,25 +43,82 @@ const previousRegimes: Map<string, string> = new Map();
 
 export function isRunning() { return running; }
 
+export function getLoopAbortSignal(): AbortSignal | undefined {
+  return loopAbortController?.signal;
+}
+
+export function clearLoopState() {
+  previousRegimes.clear();
+  lastScanTime = 0;
+  lastDecayDate = '';
+  sltpLock = false;
+  loopAbortController = null;
+}
+
 export async function startLoop() {
   if (running) return;
   running = true;
+  loopAbortController = new AbortController();
   logger.info('交易循环已启动 (双层AI模式)');
+
+  // Start independent SL/TP monitor
+  startSltpMonitor();
 
   while (running) {
     try {
       await tick();
     } catch (err) {
+      if (!running) break; // Aborted during tick, exit cleanly
       logger.error('循环执行错误', { error: err instanceof Error ? err.message : String(err) });
       recordApiFailure();
     }
+    if (!running) break;
     await sleep(LOOP_INTERVAL);
   }
 }
 
 export function stopLoop() {
   running = false;
+  sltpMonitorRunning = false;
+  // Abort all in-flight AI requests
+  if (loopAbortController) {
+    loopAbortController.abort();
+    loopAbortController = null;
+  }
   logger.info('交易循环已停止');
+}
+
+// ─── Independent SL/TP price monitor (high frequency) ───────────
+
+function startSltpMonitor() {
+  if (sltpMonitorRunning) return;
+  sltpMonitorRunning = true;
+  logger.info(`止盈止损监控已启动 (${SLTP_MONITOR_INTERVAL / 1000}s 间隔)`);
+
+  (async () => {
+    while (sltpMonitorRunning && running) {
+      try {
+        await sltpMonitorTick();
+      } catch (err) {
+        logger.warn('止盈止损监控错误', { error: err instanceof Error ? err.message : String(err) });
+      }
+      await sleep(SLTP_MONITOR_INTERVAL);
+    }
+    logger.info('止盈止损监控已停止');
+  })();
+}
+
+async function sltpMonitorTick() {
+  // Only check if there are open positions with SL/TP in DB
+  const dbOpenPositions = getOpenPositions() as any[];
+  const hasSltp = dbOpenPositions.some((p) => p.stop_loss || p.take_profit);
+  if (!hasSltp) return;
+
+  const positions = await fetchPositions();
+  recordApiSuccess();
+
+  const balance = await fetchBalance();
+  await checkStopLossAndTakeProfit(positions, balance);
 }
 
 async function tick() {
@@ -76,22 +136,14 @@ async function tick() {
 
   const positionSymbols = positions.map((p) => p.symbol).filter((s) => !basePairs.includes(s));
 
-  // Clean up orphaned SL/TP orders: if DB says position is open but exchange has no position,
-  // cancel remaining conditional orders and close the DB record
+  // Clean up orphaned positions: if DB says position is open but exchange has no position,
+  // close the DB record
   try {
     const dbOpenPositions = getOpenPositions() as any[];
     const exchangeSymbols = new Set(positions.map((p) => p.symbol));
     for (const dbPos of dbOpenPositions) {
       if (!exchangeSymbols.has(dbPos.symbol)) {
-        logger.info(`检测到孤立仓位 ${dbPos.symbol}，正在清理残留订单...`);
-        try {
-          const ex = getExchange();
-          await ex.cancelAllOrders(dbPos.symbol);
-          logger.info(`${dbPos.symbol} 残留条件单已取消`);
-        } catch (err: any) {
-          logger.warn(`${dbPos.symbol} 取消残留订单失败: ${err.message}`);
-        }
-        // Close the DB position record
+        logger.info(`检测到孤立仓位 ${dbPos.symbol}，正在关闭数据库记录...`);
         closePositionRecord({
           symbol: dbPos.symbol,
           exitPrice: 0,
@@ -102,7 +154,7 @@ async function tick() {
       }
     }
   } catch (err: any) {
-    logger.warn('孤立订单清理失败', { error: err.message });
+    logger.warn('孤立仓位清理失败', { error: err.message });
   }
 
   const now = Date.now();
@@ -161,13 +213,17 @@ async function tick() {
     logger.warn('计划过期清理失败', { error: err instanceof Error ? err.message : String(err) });
   }
 
+  // Check SL/TP triggers before processing symbols
+  const closedBySltp = await checkStopLossAndTakeProfit(positions, balance);
+
   // Process pairs in parallel batches
   for (let i = 0; i < allPairs.length; i += MAX_CONCURRENCY) {
     if (!running || isCircuitTripped()) break;
 
     const batch = allPairs.slice(i, i + MAX_CONCURRENCY);
+    const filteredBatch = batch.filter((symbol) => !closedBySltp.has(symbol));
     const results = await Promise.allSettled(
-      batch.map((symbol) => processSymbol(symbol, balance, positions))
+      filteredBatch.map((symbol) => processSymbol(symbol, balance, positions))
     );
 
     for (let j = 0; j < results.length; j++) {
@@ -175,11 +231,149 @@ async function tick() {
         recordApiSuccess();
       } else {
         const err = (results[j] as PromiseRejectedResult).reason;
-        logger.error(`处理 ${batch[j]} 时出错`, { error: err instanceof Error ? err.message : String(err) });
+        // Don't count abort errors as API failures
+        if (!running || (err instanceof Error && err.message === 'AI 请求已取消')) continue;
+        logger.error(`处理 ${filteredBatch[j]} 时出错`, { error: err instanceof Error ? err.message : String(err) });
         recordApiFailure();
       }
     }
   }
+}
+
+// ─── Application-layer SL/TP monitoring ──────────────────────────
+
+async function checkStopLossAndTakeProfit(
+  positions: Awaited<ReturnType<typeof fetchPositions>>,
+  balance: Awaited<ReturnType<typeof fetchBalance>>,
+): Promise<Set<string>> {
+  const closedSymbols = new Set<string>();
+
+  // Prevent concurrent SL/TP processing (race between main loop and monitor)
+  if (sltpLock) return closedSymbols;
+  sltpLock = true;
+
+  try {
+  for (const pos of positions) {
+    const dbPos = getOpenPositionBySymbol(pos.symbol) as any;
+    if (!dbPos) continue;
+
+    const sl = dbPos.stop_loss as number | null;
+    const tp = dbPos.take_profit as number | null;
+    if (!sl && !tp) continue;
+
+    const mark = pos.markPrice ?? 0;
+    if (mark <= 0) continue;
+
+    let triggered: 'sl' | 'tp' | null = null;
+
+    if (pos.side === 'long') {
+      if (sl && mark <= sl) triggered = 'sl';
+      else if (tp && mark >= tp) triggered = 'tp';
+    } else {
+      // short
+      if (sl && mark >= sl) triggered = 'sl';
+      else if (tp && mark <= tp) triggered = 'tp';
+    }
+
+    if (!triggered) continue;
+
+    const label = triggered === 'sl' ? '止损' : '止盈';
+    const triggerPrice = triggered === 'sl' ? sl : tp;
+    logger.info(`${pos.symbol} 触发${label}: 标记价 ${mark}, ${label}价 ${triggerPrice}`);
+
+    try {
+      const result = await closePosition(pos.symbol);
+      if (result) {
+        closedSymbols.add(pos.symbol);
+
+        const pnl = pos.unrealizedPnl ?? 0;
+
+        // Record position operation BEFORE closing DB record (closePositionRecord sets status='closed')
+        insertPositionOperation({
+          positionId: dbPos.id,
+          operation: 'CLOSE',
+          side: result.side,
+          amount: result.amount,
+          price: result.price ?? mark,
+          pnlRealized: pnl,
+          totalAmountAfter: 0,
+        });
+
+        closePositionRecord({
+          symbol: pos.symbol,
+          exitPrice: result.price ?? mark,
+          pnl,
+          exitOrderId: result.orderId,
+        });
+
+        insertTrade({
+          symbol: pos.symbol,
+          action: 'CLOSE',
+          side: result.side,
+          amount: result.amount,
+          price: result.price ?? mark,
+          stopLoss: sl ?? undefined,
+          takeProfit: tp ?? undefined,
+          orderId: result.orderId,
+          confidence: 1,
+          reasoning: `应用层${label}触发 (标记价 ${mark})`,
+          aiProvider: 'system',
+          pnl,
+        });
+
+        // Complete active plan
+        const plan = getActivePlan(pos.symbol);
+        if (plan?.id) {
+          completePlan(plan.id);
+        }
+
+        // Record trade memory
+        try {
+          const pnlPct = pos.notional > 0
+            ? (pnl / (pos.notional / pos.leverage)) * 100
+            : 0;
+          const outcome = pnl > 0 ? 'win' : 'loss';
+          const posThesis = dbPos.thesis ?? '';
+
+          insertMemory({
+            symbol: pos.symbol,
+            memoryType: 'trade_result',
+            content: `${pos.symbol} ${pos.side} ${label}平仓: ${outcome === 'win' ? '盈利' : '亏损'} ${pnlPct.toFixed(2)}%. 论点: ${posThesis}. 原因: ${label}触发 (标记价 ${mark})`,
+            marketCondition: 'unknown',
+            outcome,
+            pnlPercent: pnlPct,
+            relevanceScore: Math.abs(pnlPct) > 5 ? 1.5 : 1.0,
+            tags: `${outcome},${label}`,
+          });
+          updateSymbolStats(pos.symbol);
+        } catch (err) {
+          logger.warn('存储交易记忆失败', { error: err instanceof Error ? err.message : String(err) });
+        }
+
+        // Circuit breaker tracking
+        const pnlPct = pos.notional > 0
+          ? (pnl / (pos.notional / pos.leverage)) * 100
+          : 0;
+        if (pnlPct !== 0) recordTradeResult(pnlPct);
+        const today = new Date().toISOString().slice(0, 10);
+        updateDailyPnl(today, balance.totalBalance, pnl, 1);
+
+        broadcast({ type: 'trade', data: {
+          decision: { symbol: pos.symbol, action: 'CLOSE', confidence: 1, reasoning: `${label}触发` },
+          result,
+        }});
+        logger.info(`${pos.symbol} ${label}平仓完成: PnL ${pnl.toFixed(2)}`);
+      }
+    } catch (err: any) {
+      logger.error(`${pos.symbol} ${label}平仓失败: ${err.message}`);
+    }
+  }
+
+  } finally {
+    sltpLock = false;
+  }
+
+  return closedSymbols;
 }
 
 async function processSymbol(
@@ -188,6 +382,9 @@ async function processSymbol(
   positions: ReturnType<typeof import('../exchange/account').fetchPositions> extends Promise<infer T> ? T : never
 ) {
   logger.info(`正在处理 ${symbol}`);
+
+  // Abort early if loop was stopped
+  if (!running) return;
 
   // 1. Fetch market data
   const snapshot = await fetchMarketSnapshot(symbol);
@@ -266,7 +463,8 @@ async function processSymbol(
 
   if (needsStrategic) {
     try {
-      strategicContext = await runStrategicAnalysis(symbol, narrative, allIndicators, currentPrice);
+      strategicContext = await runStrategicAnalysis(symbol, narrative, allIndicators, currentPrice, loopAbortController?.signal);
+      if (!running) return; // Loop stopped during AI call, abort immediately
       logger.info(`${symbol} 战略分析完成: ${strategicContext.bias}, 计划: ${strategicContext.plan?.action ?? 'N/A'}`);
 
       // Process strategic plan output
@@ -276,6 +474,7 @@ async function processSymbol(
 
       broadcast({ type: 'strategic', data: { symbol, regime: strategicContext.marketRegime, bias: strategicContext.bias } });
     } catch (err) {
+      if (!running) return; // Aborted, don't fall back to cache
       logger.warn(`${symbol} 战略分析失败，使用缓存`, { error: err instanceof Error ? err.message : String(err) });
       const cached = getCachedStrategicContext(symbol);
       if (cached) {
@@ -287,6 +486,7 @@ async function processSymbol(
           marketRegime,
           bias: 'neutral',
           reasoning: '战略分析失败，使用默认中性偏好',
+          thinking: '',
           narrative,
           fetchedAt: Date.now(),
           aiProvider: 'fallback',
@@ -295,15 +495,31 @@ async function processSymbol(
       }
     }
   } else {
-    strategicContext = getCachedStrategicContext(symbol)!;
-    // Update narrative reference in cached context
-    strategicContext = { ...strategicContext, narrative };
+    const cached = getCachedStrategicContext(symbol);
+    if (cached) {
+      // Update narrative reference in cached context
+      strategicContext = { ...cached, narrative };
+    } else {
+      // Defensive fallback: cache miss despite shouldRunStrategicAnalysis returning false
+      strategicContext = {
+        symbol,
+        marketRegime,
+        bias: 'neutral',
+        reasoning: '缓存未命中，使用默认中性偏好',
+        thinking: '',
+        narrative,
+        fetchedAt: Date.now(),
+        aiProvider: 'fallback',
+        aiModel: 'none',
+      };
+    }
   }
 
   // 7. Tactical execution (every tick)
   let decision;
   let aiProvider: string;
   let aiModel: string;
+  let tacticalThinking: string;
   let indicatorsJson: string;
   let orderbookJson: string;
   let sentimentJson: string;
@@ -312,14 +528,18 @@ async function processSymbol(
     const tacticalResult = await runTacticalExecution(
       snapshot, balance, positions, strategicContext,
       allIndicators, orderbookAnalysis, sentiment,
+      loopAbortController?.signal,
     );
+    if (!running) return; // Loop stopped during AI call, abort immediately
     decision = tacticalResult.decision;
     aiProvider = tacticalResult.aiProvider;
     aiModel = tacticalResult.aiModel;
+    tacticalThinking = tacticalResult.thinking;
     indicatorsJson = tacticalResult.indicatorsJson;
     orderbookJson = tacticalResult.orderbookJson;
     sentimentJson = tacticalResult.sentimentJson;
   } catch (err) {
+    if (!running) return; // Aborted, exit cleanly
     logger.error(`${symbol} 战术执行失败`, { error: err instanceof Error ? err.message : String(err) });
     throw err;
   }
@@ -349,8 +569,10 @@ async function processSymbol(
 
   broadcast({ type: 'decision', data: {
     decision, riskCheck, aiProvider, aiModel,
+    tacticalThinking,
     strategicProvider: strategicContext.aiProvider,
     strategicModel: strategicContext.aiModel,
+    strategicThinking: strategicContext.thinking,
   } });
 
   if (!riskCheck.passed) {
@@ -359,6 +581,12 @@ async function processSymbol(
   }
 
   if (decision.action === 'HOLD') {
+    return;
+  }
+
+  // Final check: abort if loop was stopped while we were processing
+  if (!running) {
+    logger.info(`${symbol} 交易循环已停止，跳过执行 ${decision.action}`);
     return;
   }
 
@@ -471,13 +699,8 @@ async function processSymbol(
     } else if (decision.action === 'CLOSE') {
       const closedPos = positions.find((p) => p.symbol === decision.symbol);
       const pnl = closedPos?.unrealizedPnl ?? 0;
-      closePositionRecord({
-        symbol: decision.symbol,
-        exitPrice: result.price ?? 0,
-        pnl,
-        exitOrderId: result.orderId,
-      });
 
+      // Fetch DB position BEFORE closing (closePositionRecord sets status='closed')
       const dbPos = getOpenPositionBySymbol(decision.symbol);
       if (dbPos) {
         insertPositionOperation({
@@ -490,6 +713,13 @@ async function processSymbol(
           totalAmountAfter: 0,
         });
       }
+
+      closePositionRecord({
+        symbol: decision.symbol,
+        exitPrice: result.price ?? 0,
+        pnl,
+        exitOrderId: result.orderId,
+      });
 
       // Complete active plan on close
       const plan = getActivePlan(decision.symbol);

@@ -68,19 +68,30 @@ async function boot() {
 }
 
 // Graceful shutdown
+let shuttingDown = false;
 function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
   logger.info('正在关闭...');
   stopLoop();
   stopRealtimePush();
-  closeDb();
-  server.close();
-  process.exit(0);
+  server.close(() => {
+    closeDb();
+    process.exit(0);
+  });
+  // Force exit if server.close hangs
+  setTimeout(() => {
+    logger.warn('强制关闭（超时）');
+    closeDb();
+    process.exit(1);
+  }, 5000).unref();
 }
 
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 process.on('uncaughtException', (err) => {
   logger.error('未捕获的异常', { error: err.message, stack: err.stack });
+  shutdown();
 });
 process.on('unhandledRejection', (reason) => {
   logger.error('未处理的 Promise 拒绝', { reason: String(reason) });

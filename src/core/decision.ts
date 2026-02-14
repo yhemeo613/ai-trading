@@ -1,11 +1,11 @@
 import { z } from 'zod';
 
 export const TradeParamsSchema = z.object({
-  positionSizePercent: z.number().min(0),
-  leverage: z.number().min(0),
-  stopLossPrice: z.number().min(0),
-  takeProfitPrice: z.number().min(0),
-  orderType: z.enum(['MARKET', 'LIMIT']),
+  positionSizePercent: z.number().min(0).optional(),
+  leverage: z.number().min(0).optional(),
+  stopLossPrice: z.number().min(0).optional(),
+  takeProfitPrice: z.number().min(0).optional(),
+  orderType: z.enum(['MARKET', 'LIMIT']).optional(),
   addPercent: z.number().min(0).max(100).optional(),
   reducePercent: z.number().min(0).max(100).optional(),
 });
@@ -117,8 +117,23 @@ function stripNulls<T extends Record<string, any>>(obj: T): T {
   return result;
 }
 
-export function parseAIDecision(raw: string): AIDecision {
-  const jsonStr = extractJson(raw);
+/**
+ * Extract <think>...</think> content from AI response.
+ * Returns the thinking text and the remaining content.
+ */
+export function extractThinking(raw: string): { thinking: string; rest: string } {
+  const match = raw.match(/<think>([\s\S]*?)<\/think>/);
+  if (match) {
+    const thinking = match[1].trim();
+    const rest = raw.slice(match.index! + match[0].length).trim();
+    return { thinking, rest };
+  }
+  return { thinking: '', rest: raw };
+}
+
+export function parseAIDecision(raw: string): AIDecision & { thinking?: string } {
+  const { thinking, rest } = extractThinking(raw);
+  const jsonStr = extractJson(rest || raw);
   const parsed = JSON.parse(jsonStr);
   // Clean null values in params before validation
   if (parsed.params && typeof parsed.params === 'object') {
@@ -128,7 +143,8 @@ export function parseAIDecision(raw: string): AIDecision {
       parsed.params = null;
     }
   }
-  return AIDecisionSchema.parse(parsed);
+  const decision = AIDecisionSchema.parse(parsed);
+  return thinking ? { ...decision, thinking } : decision;
 }
 
 export function parsePairSelection(raw: string): PairSelection {
@@ -143,12 +159,14 @@ export function parsePortfolioReview(raw: string): PortfolioReview {
   return PortfolioReviewSchema.parse(parsed);
 }
 
-export function parseStrategicOutput(raw: string): StrategicOutput {
-  const jsonStr = extractJson(raw);
+export function parseStrategicOutput(raw: string): StrategicOutput & { thinking?: string } {
+  const { thinking, rest } = extractThinking(raw);
+  const jsonStr = extractJson(rest || raw);
   const parsed = JSON.parse(jsonStr);
   // Clean null values in plan before validation
   if (parsed.plan && typeof parsed.plan === 'object') {
     parsed.plan = stripNulls(parsed.plan);
   }
-  return StrategicOutputSchema.parse(parsed);
+  const output = StrategicOutputSchema.parse(parsed);
+  return thinking ? { ...output, thinking } : output;
 }

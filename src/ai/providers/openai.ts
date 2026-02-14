@@ -9,7 +9,7 @@ export class OpenAIProvider implements AIProvider {
     return !!config.ai.openaiKey;
   }
 
-  async chat(messages: AIMessage[]): Promise<AIResponse> {
+  async chat(messages: AIMessage[], signal?: AbortSignal): Promise<AIResponse> {
     const baseUrl = config.ai.openaiBaseUrl || 'https://api.openai.com/v1';
     const data = await aiFetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
@@ -23,10 +23,14 @@ export class OpenAIProvider implements AIProvider {
         temperature: 0.3,
         max_tokens: 2000,
       }),
+      signal,
     });
 
+    const content = data.choices?.[0]?.message?.content;
+    if (!content) throw new Error('OpenAI 返回空响应');
+
     return {
-      content: data.choices[0].message.content,
+      content,
       provider: this.name,
       model: config.ai.openaiModel,
       usage: data.usage ? {

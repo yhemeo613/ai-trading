@@ -122,7 +122,7 @@ export function calcIndicators(rawKlines: any[][]): TechnicalIndicators {
   // ── 趋势指标 ──
   const ema7Arr = EMA.calculate({ period: 7, values: closes });
   const ema21Arr = EMA.calculate({ period: 21, values: closes });
-  const ema50Arr = EMA.calculate({ period: Math.min(50, Math.floor(closes.length * 0.8)), values: closes });
+  const ema50Arr = closes.length >= 50 ? EMA.calculate({ period: 50, values: closes }) : [];
   const sma20Arr = SMA.calculate({ period: 20, values: closes });
 
   const ema7Val = last(ema7Arr);
@@ -200,8 +200,9 @@ export function calcIndicators(rawKlines: any[][]): TechnicalIndicators {
   const bbLast = last(bbArr);
   let bollingerBands: TechnicalIndicators['bollingerBands'] = null;
   if (bbLast) {
-    const width = (bbLast.upper - bbLast.lower) / bbLast.middle;
-    const percentB = (currentPrice - bbLast.lower) / (bbLast.upper - bbLast.lower);
+    const width = bbLast.middle !== 0 ? (bbLast.upper - bbLast.lower) / bbLast.middle : 0;
+    const bbRange = bbLast.upper - bbLast.lower;
+    const percentB = bbRange !== 0 ? (currentPrice - bbLast.lower) / bbRange : 0.5;
     bollingerBands = {
       upper: bbLast.upper,
       middle: bbLast.middle,

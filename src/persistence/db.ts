@@ -2,24 +2,29 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { logger } from '../utils/logger';
-
-const DB_PATH = path.resolve(__dirname, '..', '..', 'data', 'trading.db');
+import { config } from '../config';
 
 let db: Database.Database | null = null;
+
+function getDbPath(): string {
+  const suffix = config.testnetOnly ? 'testnet' : 'mainnet';
+  return path.resolve(__dirname, '..', '..', 'data', `trading_${suffix}.db`);
+}
 
 export function getDb(): Database.Database {
   if (db) return db;
 
-  const dir = path.dirname(DB_PATH);
+  const dbPath = getDbPath();
+  const dir = path.dirname(dbPath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
-  db = new Database(DB_PATH);
+  db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
 
   initTables(db);
   migrateSchema(db);
-  logger.info('SQLite 数据库已初始化', { path: DB_PATH });
+  logger.info('SQLite 数据库已初始化', { path: dbPath });
   return db;
 }
 
@@ -129,7 +134,7 @@ function initTables(db: Database.Database) {
 
     CREATE TABLE IF NOT EXISTS position_operations (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      position_id INTEGER NOT NULL,
+      position_id INTEGER NOT NULL REFERENCES positions(id),
       operation TEXT NOT NULL,
       side TEXT NOT NULL,
       amount REAL NOT NULL,
@@ -175,6 +180,10 @@ function initTables(db: Database.Database) {
       completed_at TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_plans_symbol_status ON trading_plans(symbol, status);
+    CREATE INDEX IF NOT EXISTS idx_positions_symbol_status ON positions(symbol, status);
+    CREATE INDEX IF NOT EXISTS idx_trades_created_at ON trades(created_at);
+    CREATE INDEX IF NOT EXISTS idx_strategy_memory_symbol ON strategy_memory(symbol, memory_type);
+    CREATE INDEX IF NOT EXISTS idx_position_ops_position_id ON position_operations(position_id);
   `);
 }
 
@@ -185,10 +194,19 @@ export function closeDb() {
   }
 }
 
+export function resetDb() {
+  closeDb();
+  // Next call to getDb() will reinitialize with the current mode's database
+}
+
 function migrateSchema(db: Database.Database) {
   // Helper: check if a column exists in a table
   const hasColumn = (table: string, column: string): boolean => {
-    const cols = db.prepare(`PRAGMA table_info(${table})`).all() as any[];
+    // Validate table name to prevent SQL injection (only allow alphanumeric and underscores)
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(table)) {
+      throw new Error(`Invalid table name: ${table}`);
+    }
+    const cols = db.prepare(`PRAGMA table_info("${table}")`).all() as any[];
     return cols.some((c) => c.name === column);
   };
 

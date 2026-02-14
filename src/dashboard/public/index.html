@@ -31,22 +31,23 @@
         </span>
         <span id="ai-model-badge" class="badge badge-ws">战略AI: --</span>
         <span id="ai-tactical-badge" class="badge badge-ws">战术AI: --</span>
+        <span id="ai-auxiliary-badge" class="badge badge-ws">辅助AI: --</span>
       </div>
     </div>
     <div class="nav-right">
-      <button class="btn btn-success" onclick="api('/api/start','POST')">
+      <button id="btn-start" class="btn btn-success" onclick="api('/api/start','POST')">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
         启动
       </button>
-      <button class="btn" onclick="api('/api/stop','POST')">
+      <button id="btn-stop" class="btn" onclick="api('/api/stop','POST')" disabled>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
         停止
       </button>
-      <button class="btn btn-danger" onclick="if(confirm('确认紧急停止？将平掉所有仓位！'))api('/api/emergency-stop','POST')">
+      <button id="btn-emergency" class="btn btn-danger" onclick="if(confirm('确认紧急停止？将平掉所有仓位！'))api('/api/emergency-stop','POST')" disabled>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
         紧急停止
       </button>
-      <button class="btn btn-outline" onclick="api('/api/circuit/reset','POST')">
+      <button id="btn-circuit-reset" class="btn btn-outline" onclick="if(confirm('确认重置熔断器？将清除所有保护状态！'))api('/api/circuit/reset','POST')" disabled>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
         重置熔断
       </button>

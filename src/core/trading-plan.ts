@@ -118,7 +118,7 @@ export function invalidatePlan(planId: number, reason?: string) {
 export function expireOldPlans() {
   const db = getDb();
   const result = db.prepare(
-    "UPDATE trading_plans SET status = 'EXPIRED', completed_at = datetime('now') WHERE status = 'PENDING' AND expires_at < datetime('now')"
+    "UPDATE trading_plans SET status = 'EXPIRED', completed_at = datetime('now') WHERE status = 'PENDING' AND datetime(expires_at) < datetime('now')"
   ).run();
   if (result.changes > 0) {
     logger.info(`${result.changes} 个过期计划已清理`);
