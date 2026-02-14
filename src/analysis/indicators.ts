@@ -359,9 +359,9 @@ export function calcSentiment(
     // RSI
     if (ind.rsi14 !== null) {
       if (ind.rsi14 > 70) score -= 3 * weight;
-      else if (ind.rsi14 > 60) score += 1 * weight;
+      else if (ind.rsi14 > 60) score -= 1 * weight;
       else if (ind.rsi14 < 30) score += 3 * weight;
-      else if (ind.rsi14 < 40) score -= 1 * weight;
+      else if (ind.rsi14 < 40) score += 1 * weight;
     }
 
     // MACD

@@ -262,4 +262,15 @@ function migrateSchema(db: Database.Database) {
   if (!hasColumn('positions', 'strategic_context')) {
     db.exec('ALTER TABLE positions ADD COLUMN strategic_context TEXT');
   }
+
+  // decisions: add thinking and params columns for dashboard persistence
+  if (!hasColumn('decisions', 'tactical_thinking')) {
+    db.exec('ALTER TABLE decisions ADD COLUMN tactical_thinking TEXT');
+  }
+  if (!hasColumn('decisions', 'strategic_thinking')) {
+    db.exec('ALTER TABLE decisions ADD COLUMN strategic_thinking TEXT');
+  }
+  if (!hasColumn('decisions', 'params_json')) {
+    db.exec('ALTER TABLE decisions ADD COLUMN params_json TEXT');
+  }
 }

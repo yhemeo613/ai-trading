@@ -14,11 +14,14 @@ export function insertDecision(decision: {
   indicatorsJson?: string;
   orderbookJson?: string;
   sentimentJson?: string;
+  tacticalThinking?: string;
+  strategicThinking?: string;
+  paramsJson?: string;
 }) {
   const db = getDb();
   const stmt = db.prepare(`
-    INSERT INTO decisions (symbol, action, confidence, reasoning, raw_response, ai_provider, ai_model, risk_passed, risk_reason, executed, indicators_json, orderbook_json, sentiment_json)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO decisions (symbol, action, confidence, reasoning, raw_response, ai_provider, ai_model, risk_passed, risk_reason, executed, indicators_json, orderbook_json, sentiment_json, tactical_thinking, strategic_thinking, params_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   return stmt.run(
     decision.symbol, decision.action, decision.confidence ?? null,
@@ -27,7 +30,9 @@ export function insertDecision(decision: {
     decision.riskPassed ? 1 : 0, decision.riskReason ?? null,
     decision.executed ? 1 : 0,
     decision.indicatorsJson ?? null, decision.orderbookJson ?? null,
-    decision.sentimentJson ?? null
+    decision.sentimentJson ?? null,
+    decision.tacticalThinking ?? null, decision.strategicThinking ?? null,
+    decision.paramsJson ?? null
   );
 }
 

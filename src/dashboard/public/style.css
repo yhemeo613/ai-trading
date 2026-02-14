@@ -589,6 +589,129 @@ tr:last-child td { border-bottom: none; }
   min-height: 0;
 }
 
+/* ===== PRICE WATCH MONITOR ===== */
+.pricewatch-empty {
+  color: var(--text-muted);
+  font-style: italic;
+  font-size: 12px;
+  text-align: center;
+  padding: 12px 0;
+}
+
+.pw-card {
+  background: var(--surface-elevated);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  margin-bottom: 6px;
+  animation: fadeIn 0.2s ease;
+}
+
+.pw-card:last-child { margin-bottom: 0; }
+
+.pw-card.pw-triggered {
+  border-color: var(--warning);
+  background: var(--warning-bg);
+}
+
+.pw-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.pw-symbol {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.pw-price {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.pw-time {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.pw-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.pw-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.pw-status-monitoring { color: var(--accent); }
+.pw-dot-monitoring { background: var(--accent); box-shadow: 0 0 6px var(--accent); animation: pulse 2s ease-in-out infinite; }
+
+.pw-status-held { color: var(--text-subtle); }
+.pw-dot-held { background: var(--text-subtle); }
+
+.pw-status-triggered { color: var(--warning); }
+.pw-dot-triggered { background: var(--warning); box-shadow: 0 0 6px var(--warning); animation: pulse 1s ease-in-out infinite; }
+
+.pw-zones {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pw-zone {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 8px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pw-zone.pw-long {
+  background: var(--positive-bg);
+  color: var(--positive);
+  border: 1px solid #10b98125;
+}
+
+.pw-zone.pw-short {
+  background: var(--negative-bg);
+  color: var(--negative);
+  border: 1px solid #ef444425;
+}
+
+.pw-dir {
+  font-weight: 700;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.pw-conf {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
 /* ===== CIRCUIT BREAKER ===== */
 .circuit-box {
   background: var(--surface-elevated);

@@ -53,7 +53,7 @@ ${limitsBlock}
 
 ## 优先级
 有仓位: CLOSE>REDUCE>ADD>ADJUST>HOLD
-无仓位看多: LONG>HOLD | 看空: SHORT>HOLD
+无仓位: 信号明确→LONG/SHORT | 信号不足→HOLD
 
 返回JSON:
 {"action":"LONG|SHORT|CLOSE|HOLD|ADJUST|ADD|REDUCE","symbol":"BTC/USDT:USDT","confidence":0.0-1.0,"reasoning":"中文","marketRegime":"trending_up|trending_down|ranging|volatile|quiet","params":{"positionSizePercent":0,"leverage":0,"stopLossPrice":0,"takeProfitPrice":0,"orderType":"MARKET|LIMIT","addPercent":0,"reducePercent":0}}`;

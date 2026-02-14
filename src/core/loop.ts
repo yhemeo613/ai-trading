@@ -476,6 +476,87 @@ async function processSymbol(
     }
   }
 
+  // ─── Price-Watch Gateway (roundtable mode only) ─────────────────
+  // Skip expensive AI roundtable calls when price is not near any entry zone.
+  // Flow: no position & no plan → run init roundtable to generate plans
+  //       has pending plan & price outside zone → skip AI, just monitor
+  //       has pending plan & price in zone → run confirmation roundtable
+  //       has position → skip (SL/TP monitor handles it), unless regime/narrative shift
+  //       all plans expired → regenerate
+  if (useRoundtable) {
+    const currentPosition = positions.find((p) => p.symbol === symbol);
+    const pendingPlans = getPendingPlans(symbol);
+    const activePlanNow = getActivePlan(symbol);
+    const hasPosition = !!currentPosition;
+    const hasPendingPlans = pendingPlans.length > 0;
+    const hasActivePlan = !!activePlanNow;
+    const significantShift = !!narrative.narrativeShift || regimeChanged;
+
+    // State 1: Has position → skip roundtable (SL/TP monitor covers it)
+    //          Exception: significant narrative/regime shift triggers a review
+    if (hasPosition) {
+      if (!significantShift) {
+        logger.info(`${symbol} 价格监控中 [持仓中，SL/TP监控覆盖]`);
+        broadcast({ type: 'pricewatch', data: { symbol, state: 'position_held', price: currentPrice } });
+        return;
+      }
+      // significantShift → fall through to run roundtable for position review
+      logger.info(`${symbol} 持仓中但检测到市场剧变，触发圆桌审查`);
+    }
+
+    // State 2: No position, no pending plans, no active plan → need initial roundtable
+    if (!hasPosition && !hasPendingPlans && !hasActivePlan) {
+      // Fall through to run roundtable — it will generate plans
+      // But rate-limit: if we already generated plans this session and they all expired,
+      // still fall through (the roundtable will produce new ones)
+      logger.info(`${symbol} 无计划无持仓，运行初始化圆桌产出交易计划`);
+      // Mark that we'll generate plans (reset after plans are created)
+    }
+
+    // State 3: Has pending plans, price NOT in any entry zone → skip AI
+    if (!hasPosition && hasPendingPlans) {
+      const triggered = pendingPlans.find((p) => evaluatePlanEntry(p, currentPrice));
+      if (!triggered) {
+        // Price not near any entry zone — pure monitoring, zero AI
+        const zones = pendingPlans.map((p) =>
+          `${p.direction} [${p.entryZone.low.toFixed(2)}-${p.entryZone.high.toFixed(2)}]`
+        ).join(', ');
+        logger.info(`${symbol} 价格监控中: ${currentPrice.toFixed(2)} | 等待入场区间: ${zones}`);
+        broadcast({
+          type: 'pricewatch',
+          data: {
+            symbol,
+            state: 'monitoring',
+            price: currentPrice,
+            plans: pendingPlans.map((p) => ({
+              id: p.id,
+              direction: p.direction,
+              entryZone: p.entryZone,
+              confidence: p.confidence,
+            })),
+          },
+        });
+        return;
+      }
+
+      // State 4: Price entered entry zone → run confirmation roundtable
+      logger.info(`${symbol} 价格 ${currentPrice.toFixed(2)} 进入 ${triggered.direction} 入场区间 [${triggered.entryZone.low.toFixed(2)}-${triggered.entryZone.high.toFixed(2)}]，触发确认圆桌`);
+      broadcast({
+        type: 'pricewatch',
+        data: {
+          symbol,
+          state: 'entry_triggered',
+          price: currentPrice,
+          triggeredPlan: { id: triggered.id, direction: triggered.direction, entryZone: triggered.entryZone },
+        },
+      });
+      // Fall through to run roundtable for confirmation
+    }
+
+    // States that fall through: 2 (no plans), 4 (price in zone), 1+shift (position review)
+    // All proceed to the roundtable below
+  }
+
   // 6. Strategic analysis (every 5 min or on significant change)
   //    In roundtable mode, skip separate strategic AI call — the Chief Strategist role handles it.
   let strategicContext: StrategicContext;
@@ -665,6 +746,9 @@ async function processSymbol(
     indicatorsJson,
     orderbookJson,
     sentimentJson,
+    tacticalThinking,
+    strategicThinking: strategicContext.thinking,
+    paramsJson: decision.params ? JSON.stringify(decision.params) : undefined,
   });
   const decisionId = Number(decisionResult.lastInsertRowid);
 

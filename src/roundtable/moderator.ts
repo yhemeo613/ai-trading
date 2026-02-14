@@ -86,16 +86,16 @@ export async function runChairmanSynthesis(
 共识级别: unanimous=全票一致, strong_majority=4-5/6高置信, majority=4/6, split=接近平分, overruled=风险经理否决
 
 决策原则:
-- 多数角色方向一致时果断决策，不因少数保守意见HOLD
+- 综合所有角色意见，按权重加权判断方向
 - 风险经理否决权仅限极端情况（熔断器触发、连亏5+、杠杆超限）
-- 小余额≠不交易，小账户更需要抓住趋势机会，用合理仓位积极参与
 ${limitsBlock}
-- 趋势明确时果断>完美，不要因为部分角色说HOLD就放弃明确的趋势机会
-- 如果reasoning中认为应该做多/做空，action就必须是LONG/SHORT，绝对不能reasoning说做多但action写HOLD
-- HOLD只用于真正没有方向或风险极端的情况，不是"谨慎"的默认选项
+- 做多和做空完全对等，空头趋势明确时果断做空，多头趋势明确时果断做多
+- 信号矛盾或方向不明时，HOLD是合理决策，不要强行开仓
+- action必须与reasoning一致：分析看多→LONG，分析看空→SHORT，方向不明→HOLD
+- 多数角色方向一致且置信度高时果断执行，意见分歧大时倾向HOLD
 ${riskVeto ? '⚠️ 风险经理已行使否决权（极端风险）' : ''}
 
-⚠️ 重要：action字段必须与reasoning一致。如果你的分析结论是应该做多，action必须是LONG而不是HOLD。
+⚠️ 重要：action字段必须与reasoning一致。分析看多→LONG，分析看空→SHORT，方向不明→HOLD。
 
 返回严格JSON:
 {"action":"LONG|SHORT|CLOSE|HOLD|ADJUST|ADD|REDUCE","confidence":0-1,"reasoning":"中文综合分析","consensusLevel":"unanimous|strong_majority|majority|split|overruled","keyDebatePoints":["点1","点2"],"dissent":"少数派意见","riskManagerVerdict":"风险经理意见","params":{"positionSizePercent":num,"leverage":num,"stopLossPrice":num,"takeProfitPrice":num,"orderType":"MARKET|LIMIT"},"marketRegime":"trending_up|trending_down|ranging|volatile|quiet"}`;

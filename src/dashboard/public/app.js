@@ -117,7 +117,65 @@ function handleWsMessage(msg) {
     case 'trade': refreshTrades(); refreshPositionHistory(); break;
     case 'circuit': updateCircuit(msg.data); syncControlButtons(null, msg.data); break;
     case 'pairs': updateActivePairs(msg.data); break;
+    case 'pricewatch': updatePriceWatch(msg.data); break;
   }
+}
+
+// ===== Price Watch Monitor =====
+const pricewatchState = {}; // keyed by symbol
+
+function updatePriceWatch(data) {
+  if (!data || !data.symbol) return;
+  pricewatchState[data.symbol] = { ...data, updatedAt: new Date().toLocaleTimeString() };
+  renderPriceWatch();
+}
+
+function renderPriceWatch() {
+  const container = document.getElementById('pricewatch-container');
+  const symbols = Object.keys(pricewatchState);
+  if (!symbols.length) {
+    container.innerHTML = '<div class="pricewatch-empty">等待启动...</div>';
+    return;
+  }
+
+  container.innerHTML = symbols.map(sym => {
+    const d = pricewatchState[sym];
+    const shortSym = escapeHtml(sym.replace('/USDT:USDT', ''));
+    const price = Number(d.price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+    if (d.state === 'position_held') {
+      return `<div class="pw-card pw-held">` +
+        `<div class="pw-header"><span class="pw-symbol">${shortSym}</span><span class="pw-price">$${price}</span><span class="pw-time">${escapeHtml(d.updatedAt)}</span></div>` +
+        `<div class="pw-status pw-status-held"><span class="pw-dot pw-dot-held"></span>持仓中 · SL/TP 监控</div>` +
+      `</div>`;
+    }
+
+    if (d.state === 'entry_triggered') {
+      const tp = d.triggeredPlan;
+      const dir = tp.direction === 'LONG' ? '做多' : '做空';
+      const dirClass = tp.direction === 'LONG' ? 'pw-long' : 'pw-short';
+      return `<div class="pw-card pw-triggered">` +
+        `<div class="pw-header"><span class="pw-symbol">${shortSym}</span><span class="pw-price">$${price}</span><span class="pw-time">${escapeHtml(d.updatedAt)}</span></div>` +
+        `<div class="pw-status pw-status-triggered"><span class="pw-dot pw-dot-triggered"></span>触发确认圆桌</div>` +
+        `<div class="pw-zone ${dirClass}"><span class="pw-dir">${dir}</span> ${Number(tp.entryZone.low).toFixed(2)} - ${Number(tp.entryZone.high).toFixed(2)}</div>` +
+      `</div>`;
+    }
+
+    // state === 'monitoring'
+    const plans = d.plans || [];
+    const zonesHtml = plans.map(p => {
+      const dir = p.direction === 'LONG' ? '多' : '空';
+      const dirClass = p.direction === 'LONG' ? 'pw-long' : 'pw-short';
+      const conf = (p.confidence * 100).toFixed(0);
+      return `<div class="pw-zone ${dirClass}"><span class="pw-dir">${dir}</span> ${Number(p.entryZone.low).toFixed(2)} - ${Number(p.entryZone.high).toFixed(2)} <span class="pw-conf">${conf}%</span></div>`;
+    }).join('');
+
+    return `<div class="pw-card">` +
+      `<div class="pw-header"><span class="pw-symbol">${shortSym}</span><span class="pw-price">$${price}</span><span class="pw-time">${escapeHtml(d.updatedAt)}</span></div>` +
+      `<div class="pw-status pw-status-monitoring"><span class="pw-dot pw-dot-monitoring"></span>价格监控中</div>` +
+      (zonesHtml ? `<div class="pw-zones">${zonesHtml}</div>` : '') +
+    `</div>`;
+  }).join('');
 }
 
 // ===== Realtime tickers via WebSocket =====
@@ -540,6 +598,40 @@ async function refreshDailyPnl() {
   } catch (e) { console.error('日盈亏刷新错误', e); }
 }
 
+async function refreshAnalysisHistory() {
+  try {
+    const decisions = await (await fetch('/api/decisions')).json();
+    if (!Array.isArray(decisions) || decisions.length === 0) return;
+    // Map DB rows to the same shape addAnalysis uses
+    for (const row of decisions) {
+      const time = row.created_at ? row.created_at.replace('T', ' ').slice(11, 19) : '--';
+      let params = null;
+      if (row.params_json) {
+        try { params = JSON.parse(row.params_json); } catch {}
+      }
+      analysisHistory.push({
+        time,
+        symbol: row.symbol,
+        action: row.action,
+        confidence: row.confidence ?? 0,
+        reasoning: row.reasoning ?? '',
+        params,
+        riskPassed: !!row.risk_passed,
+        riskReason: row.risk_reason ?? '',
+        tacticalThinking: row.tactical_thinking ?? '',
+        strategicThinking: row.strategic_thinking ?? '',
+      });
+    }
+    if (analysisHistory.length > MAX_HISTORY) analysisHistory.length = MAX_HISTORY;
+    // Update count badge and render
+    document.getElementById('analysis-count').textContent = analysisHistory.length;
+    renderedCount = 0;
+    const content = document.getElementById('ai-history-content');
+    content.innerHTML = '';
+    renderMoreItems();
+  } catch (e) { console.error('分析历史加载错误', e); }
+}
+
 function refreshAll() {
   refreshStatus();
   refreshTrades();
@@ -547,6 +639,8 @@ function refreshAll() {
   refreshDailyPnl();
   refreshTickers();
   refreshMode();
+  // Only hydrate analysis history on first load (empty array)
+  if (analysisHistory.length === 0) refreshAnalysisHistory();
 }
 
 // 初始化
